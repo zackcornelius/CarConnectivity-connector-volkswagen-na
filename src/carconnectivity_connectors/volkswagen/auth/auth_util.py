@@ -20,7 +20,7 @@ def add_bearer_auth_header(token, headers: Optional[Dict[str, str]] = None) -> D
 
     Args:
         token (str): The Bearer token to be added to the headers.
-        headers (Optional[Dict[str, str]]): An optional dictionary of headers to which the Authorization header will be added. 
+        headers (Optional[Dict[str, str]]): An optional dictionary of headers to which the Authorization header will be added.
                                             If not provided, a new dictionary will be created.
 
     Returns:
