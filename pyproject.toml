@@ -14,7 +14,9 @@ authors = [
     { name = "Till Steinbach" }
 ]
 dependencies = [
-    "carconnectivity"
+    "carconnectivity",
+    "oauthlib",
+    "requests"
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -33,3 +35,6 @@ classifiers = [
 [project.urls]
 
 [tool.setuptools_scm]
+
+[tool.pylint.format]
+max-line-length=160
