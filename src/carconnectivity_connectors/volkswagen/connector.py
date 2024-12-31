@@ -229,6 +229,8 @@ class Connector(BaseConnector):
             None
         """
         vin = vehicle.vin.value
+        if vin is None:
+            raise ValueError('vehicle.vin cannot be None')
         known_capabilities: list[str] = ['access',
                                          'activeventilation',
                                          'automation',
@@ -274,6 +276,7 @@ class Connector(BaseConnector):
                                 if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
                                     LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
                                     vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type in [GenericVehicle.Type.FUEL,
                                                   GenericVehicle.Type.GASOLINE,
                                                   GenericVehicle.Type.PETROL,
@@ -283,9 +286,11 @@ class Connector(BaseConnector):
                                         and not isinstance(vehicle, VolkswagenCombustionVehicle):
                                     LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
                                     vehicle = VolkswagenCombustionVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
-                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
                                     LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
+                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
                                 LOG_API_DEBUG.warning('Unknown car type %s', fuel_level_status['carType'])
