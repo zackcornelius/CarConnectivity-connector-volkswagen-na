@@ -74,20 +74,20 @@ class Connector(BaseConnector):
                 raise AuthenticationError(f'Authentication using {netrc_filename} failed: {err}') from err
             except TypeError as err:
                 if 'username' not in self.config:
-                    raise AuthenticationError(f'skoda.de entry was not found in {netrc_filename} netrc-file.'
+                    raise AuthenticationError(f'"volkswagen" entry was not found in {netrc_filename} netrc-file.'
                                               ' Create it or provide username and password in config') from err
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
-
-        self.max_age: int = 300
-        if 'max_age' in self.config:
-            self.max_age = self.config['max_age']
 
         self.intervall: int = 300
         if 'interval' in self.config:
             self.intervall = self.config['interval']
             if self.intervall < 180:
                 raise ValueError('Interval must be at least 180 seconds')
+
+        self.max_age: int = self.intervall - 1
+        if 'max_age' in self.config:
+            self.max_age = self.config['max_age']
 
         if username is None or password is None:
             raise AuthenticationError('Username or password not provided')
@@ -203,6 +203,9 @@ class Connector(BaseConnector):
                                 else:
                                     raise APIError('Could not fetch capabilities, capability ID missing')
                             for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
+                                print(vehicle.capabilities.capabilities.keys())
+                                print(found_capabilities)
+                                print(vehicle.capabilities.capabilities.keys() - found_capabilities)
                                 vehicle.capabilities.remove_capability(capability_id)
                         else:
                             vehicle.capabilities.clear_capabilities()
@@ -251,9 +254,13 @@ class Connector(BaseConnector):
             if vehicle.capabilities.has_capability(capability_id) \
                     and vehicle.capabilities.get_capability(capability_id).enabled:  # pyright: ignore[reportOptionalMemberAccess]
                 jobs.append(capability_id)
+        if len(jobs) == 0:
+            LOG.warning('No capabilities enabled for vehicle %s', vin)
+            return
 
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
         data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        print(data)
         if data is not None:
             if 'measurements' in data and data['measurements'] is not None:
                 if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
@@ -265,6 +272,7 @@ class Connector(BaseConnector):
                             try:
                                 car_type = GenericVehicle.Type(fuel_level_status['carType'])
                                 if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
                                     vehicle = VolkswagenElectricVehicle(origin=vehicle)
                                 elif car_type in [GenericVehicle.Type.FUEL,
                                                   GenericVehicle.Type.GASOLINE,
@@ -273,9 +281,11 @@ class Connector(BaseConnector):
                                                   GenericVehicle.Type.CNG,
                                                   GenericVehicle.Type.LPG] \
                                         and not isinstance(vehicle, VolkswagenCombustionVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
                                     vehicle = VolkswagenCombustionVehicle(origin=vehicle)
                                 elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
                                     vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                    LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
                                 LOG_API_DEBUG.warning('Unknown car type %s', fuel_level_status['carType'])
@@ -472,8 +482,6 @@ class Connector(BaseConnector):
                 vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
                 vehicle.lights.enabled = False
             log_extra_keys(LOG_API_DEBUG, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights'})
-
-        print(data)
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
