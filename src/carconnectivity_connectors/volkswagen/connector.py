@@ -14,6 +14,8 @@ from carconnectivity.util import robust_time_parse, log_extra_keys
 from carconnectivity.units import Length
 from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.doors import Doors
+from carconnectivity.windows import Windows
+from carconnectivity.lights import Lights
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
 from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle, VolkswagenHybridVehicle
@@ -143,9 +145,13 @@ class Connector(BaseConnector):
 
                         if 'nickname' in vehicle_dict and vehicle_dict['nickname'] is not None:
                             vehicle.name._set_value(vehicle_dict['nickname'])  # pylint: disable=protected-access
+                        else:
+                            vehicle.name._set_value(None)  # pylint: disable=protected-access
 
                         if 'model' in vehicle_dict and vehicle_dict['model'] is not None:
                             vehicle.model._set_value(vehicle_dict['model'])  # pylint: disable=protected-access
+                        else:
+                            vehicle.model._set_value(None)  # pylint: disable=protected-access
 
                         if 'capabilities' in vehicle_dict and vehicle_dict['capabilities'] is not None:
                             found_capabilities = set()
@@ -161,14 +167,24 @@ class Connector(BaseConnector):
                                     if 'expirationDate' in capability_dict and capability_dict['expirationDate'] is not None:
                                         expiration_date: datetime = robust_time_parse(capability_dict['expirationDate'])
                                         capability.expiration_date._set_value(expiration_date)  # pylint: disable=protected-access
+                                    else:
+                                        capability.expiration_date._set_value(None)  # pylint: disable=protected-access
                                     if 'userDisablingAllowed' in capability_dict and capability_dict['userDisablingAllowed'] is not None:
                                         # pylint: disable-next=protected-access
                                         capability.user_disabling_allowed._set_value(capability_dict['userDisablingAllowed'])
+                                    else:
+                                        capability.user_disabling_allowed._set_value(None)  # pylint: disable=protected-access
+                                else:
+                                    raise APIError('Could not fetch capabilities, capability ID missing')
                             for capability_id in vehicle.capabilities.keys() - found_capabilities:
                                 vehicle.capabilities[capability_id].enabled = False
                                 vehicle.capabilities.pop(capability_id)
+                        else:
+                            vehicle.capabilities = {}
 
                         self.fetch_vehicle_status(vehicle)
+                    else:
+                        raise APIError('Could not fetch vehicle data, VIN missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
             vehicle_to_remove = garage.get_vehicle(vin)
             if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
@@ -252,8 +268,14 @@ class Connector(BaseConnector):
                         if 'odometer' in odometer_status and odometer_status['odometer'] is not None:
                             # pylint: disable-next=protected-access
                             vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
+                        else:
+                            vehicle.odometer._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         log_extra_keys(LOG_API_DEBUG, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
+                else:
+                    vehicle.odometer._set_value(None)  # pylint: disable=protected-access
                 log_extra_keys(LOG_API_DEBUG, 'measurements', data['measurements'], {'fuelLevelStatus', 'rangeStatus', 'odometerStatus'})
+            else:
+                vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'access' in data and data['access'] is not None:
                 if 'accessStatus' in data['access'] and data['access']['accessStatus'] is not None:
                     if 'value' in data['access']['accessStatus'] and data['access']['accessStatus']['value'] is not None:
@@ -261,50 +283,169 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in access_status or access_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(access_status['carCapturedTimestamp'])
+                        seen_door_ids: set[str] = set()
                         if 'doors' in access_status and access_status['doors'] is not None:
-                            seen_door_ids: set[str] = set()
                             all_doors_closed = True
                             for door_status in access_status['doors']:
-                                door_id = door_status['name']
-                                seen_door_ids.add(door_id)
-                                if door_id in vehicle.doors.doors:
-                                    door: Doors.Door = vehicle.doors.doors[door_id]
+                                if 'name' in door_status and door_status['name'] is not None:
+                                    door_id = door_status['name']
+                                    seen_door_ids.add(door_id)
+                                    if door_id in vehicle.doors.doors:
+                                        door: Doors.Door = vehicle.doors.doors[door_id]
+                                    else:
+                                        door = Doors.Door(door_id=door_id, doors=vehicle.doors)
+                                        vehicle.doors.doors[door_id] = door
+                                    if 'status' in door_status and door_status['status'] is not None:
+                                        if 'locked' in door_status['status']:
+                                            door.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
+                                        elif 'unlocked' in door_status['status']:
+                                            door.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                                        else:
+                                            door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                                        if 'open' in door_status['status']:
+                                            all_doors_closed = False
+                                            door.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                                        elif 'closed' in door_status['status']:
+                                            door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                                        elif 'unsupported' in door_status['status']:
+                                            door.open_state._set_value(Doors.OpenState.UNSUPPORTED, measured=captured_at)  # pylint: disable=protected-access
+                                        else:
+                                            door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                                            LOG_API_DEBUG.info('Unknown door status %s', door_status['status'])
+                                    else:
+                                        door.open_state._set_value(None)  # pylint: disable=protected-access
+                                        door.lock_state._set_value(None)  # pylint: disable=protected-access
                                 else:
-                                    door = Doors.Door(door_id=door_id, doors=vehicle.doors)
-                                    vehicle.doors.doors[door_id] = door
-                                if 'status' in door_status and door_status['status'] is not None:
-                                    if 'locked' in door_status['status']:
-                                        door.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
-                                    elif 'unlocked' in door_status['status']:
-                                        door.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
-                                    else:
-                                        door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                    if 'open' in door_status['status']:
-                                        all_doors_closed = False
-                                        door.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                                    elif 'closed' in door_status['status']:
-                                        door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
-                                    elif 'unsupported' in door_status['status']:
-                                        door.open_state._set_value(Doors.OpenState.UNSUPPORTED, measured=captured_at)  # pylint: disable=protected-access
-                                    else:
-                                        door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                        LOG_API_DEBUG.warning('Unknown door status %s', door_status['status'])
+                                    raise APIError('Could not fetch door status, door ID missing')
                                 log_extra_keys(LOG_API_DEBUG, 'doors', door_status, {'name', 'status'})
                             if all_doors_closed:
                                 vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
                             else:
                                 vehicle.doors.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                            for door_id in vehicle.doors.doors.keys() - seen_door_ids:
-                                vehicle.doors.doors[door_id].enabled = False
-                                vehicle.doors.doors.pop(door_id)
+                            if 'doorLockStatus' in access_status and access_status['doorLockStatus'] is not None:
+                                if access_status['doorLockStatus'] == 'locked':
+                                    vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
+                                elif access_status['doorLockStatus'] == 'unlocked':
+                                    vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                                elif access_status['doorLockStatus'] == 'invalid':
+                                    vehicle.doors.lock_state._set_value(Doors.LockState.INVALID, measured=captured_at)  # pylint: disable=protected-access
+                                else:
+                                    LOG_API_DEBUG.info('Unknown door lock status %s', access_status['doorLockStatus'])
+                                    vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            else:
+                                vehicle.doors.lock_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+
+                        else:
+                            vehicle.doors.open_state._set_value(None)  # pylint: disable=protected-access
+                        for door_id in vehicle.doors.doors.keys() - seen_door_ids:
+                            vehicle.doors.doors[door_id].enabled = False
                         if 'overallStatus' in access_status and access_status['overallStatus'] is not None:
                             if access_status['overallStatus'] == 'safe':
                                 vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
                             elif access_status['overallStatus'] == 'unsafe':
                                 vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API_DEBUG, 'accessStatus', access_status, {'carCapturedTimestamp', 'doors', 'overallStatus'})
+                        else:
+                            vehicle.doors.lock_state._set_value(None)  # pylint: disable=protected-access
+                        seen_window_ids: set[str] = set()
+                        if 'windows' in access_status and access_status['windows'] is not None:
+                            all_windows_closed = True
+                            for window_status in access_status['windows']:
+                                if 'name' in window_status and window_status['name'] is not None:
+                                    window_id = window_status['name']
+                                    seen_window_ids.add(window_id)
+                                    if window_id in vehicle.windows.windows:
+                                        window: Windows.Window = vehicle.windows.windows[window_id]
+                                    else:
+                                        window = Windows.Window(window_id=window_id, windows=vehicle.windows)
+                                        vehicle.windows.windows[window_id] = window
+                                    if 'status' in window_status and window_status['status'] is not None:
+                                        if 'closed' in window_status['status']:
+                                            window.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                                        elif 'open' in window_status['status']:
+                                            all_windows_closed = False
+                                            window.open_state._set_value(Windows.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                                        elif 'unsupported' in window_status['status']:
+                                            # pylint: disable-next=protected-access
+                                            window.open_state._set_value(Windows.OpenState.UNSUPPORTED, measured=captured_at)
+                                        elif 'invalid' in window_status['status']:
+                                            window.open_state._set_value(Windows.OpenState.INVALID, measured=captured_at)  # pylint: disable=protected-access
+                                        else:
+                                            window.open_state._set_value(Windows.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                                            LOG_API_DEBUG.info('Unknown window status %s', window_status['status'])
+                                    else:
+                                        window.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                                else:
+                                    raise APIError('Could not fetch window status, window ID missing')
+                            if all_windows_closed:
+                                vehicle.windows.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                            else:
+                                vehicle.windows.open_state._set_value(Windows.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.windows.open_state._set_value(None)  # pylint: disable=protected-access
+                        for window_id in vehicle.windows.windows.keys() - seen_window_ids:
+                            vehicle.windows.windows[window_id].enabled = False
+                        log_extra_keys(LOG_API_DEBUG, 'accessStatus', access_status, {'carCapturedTimestamp',
+                                                                                      'doors',
+                                                                                      'overallStatus',
+                                                                                      'doorLockStatus',
+                                                                                      'windows'})
                 log_extra_keys(LOG_API_DEBUG, 'access', data['access'], {'accessStatus'})
-            log_extra_keys(LOG_API_DEBUG, 'selectivestatus', data, {'measurements', 'access'})
+            else:
+                vehicle.doors.lock_state._set_value(None)  # pylint: disable=protected-access
+                vehicle.doors.open_state._set_value(None)  # pylint: disable=protected-access
+                vehicle.doors.enabled = False
+            if 'vehicleLights' in data and data['vehicleLights'] is not None:
+                if 'lightsStatus' in data['vehicleLights'] and data['vehicleLights']['lightsStatus'] is not None:
+                    lights_status = data['vehicleLights']['lightsStatus']
+                    seen_light_ids: set[str] = set()
+                    if 'value' in lights_status and lights_status['value'] is not None:
+                        lights_status = lights_status['value']
+                        if 'carCapturedTimestamp' not in lights_status or lights_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(lights_status['carCapturedTimestamp'])
+                        if 'lights' in lights_status and lights_status['lights'] is not None:
+                            all_lights_off = True
+                            for light_status in lights_status['lights']:
+                                if 'name' in light_status and light_status['name'] is not None:
+                                    light_id = light_status['name']
+                                    seen_light_ids.add(light_id)
+                                    if light_id in vehicle.lights.lights:
+                                        light: Lights.Light = vehicle.lights.lights[light_id]
+                                    else:
+                                        light: Lights.Light = Lights.Light(light_id=light_id, lights=vehicle.lights)
+                                        vehicle.lights.lights[light_id] = light
+                                    if 'status' in light_status and light_status['status'] is not None:
+                                        if light_status['status'] == 'on':
+                                            all_lights_off = False
+                                            light.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
+                                        elif light_status['status'] == 'off':
+                                            light.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
+                                        elif light_status['status'] == 'invalid':
+                                            light.light_state._set_value(Lights.LightState.INVALID, measured=captured_at)  # pylint: disable=protected-access
+                                        else:
+                                            light.light_state._set_value(Lights.LightState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                                            LOG_API_DEBUG.info('Unknown light status %s', light_status['status'])
+                                    else:
+                                        light.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                                else:
+                                    raise APIError('Could not fetch light status, light ID missing')
+                                log_extra_keys(LOG_API_DEBUG, 'lights', light_status, {'name', 'status'})
+                            if all_lights_off:
+                                vehicle.lights.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
+                            else:
+                                vehicle.lights.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.lights.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API_DEBUG, 'lights', lights_status, {'carCapturedTimestamp', 'lights'})
+                    for light_id in vehicle.lights.lights.keys() - seen_light_ids:
+                        vehicle.lights.lights[light_id].enabled = False
+                else:
+                    vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
+                    vehicle.lights.enabled = False
+            else:
+                vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
+                vehicle.lights.enabled = False
+            log_extra_keys(LOG_API_DEBUG, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights'})
 
         print(data)
 
