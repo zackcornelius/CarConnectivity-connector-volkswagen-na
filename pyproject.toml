@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 name = "carconnectivity-connector-volkswagen"
 description = "CarConnectivity connector for Volkswagen services"
 dynamic = ["version"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     { name = "Till Steinbach" }
 ]
@@ -35,6 +35,8 @@ classifiers = [
 [project.urls]
 
 [tool.setuptools_scm]
+write_to = "src/carconnectivity_connectors/volkswagen/_version.py"
 
 [tool.pylint.format]
 max-line-length=160
+ignore-patterns= "_version.py"

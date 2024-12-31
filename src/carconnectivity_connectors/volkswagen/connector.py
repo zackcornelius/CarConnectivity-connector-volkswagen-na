@@ -2,6 +2,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import threading
+
 import os
 import logging
 import netrc
@@ -18,8 +20,10 @@ from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
-from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle, VolkswagenHybridVehicle
+from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle, \
+    VolkswagenHybridVehicle
 from carconnectivity_connectors.volkswagen.capability import Capability
+from carconnectivity_connectors.volkswagen._version import __version__
 
 
 if TYPE_CHECKING:
@@ -45,6 +49,9 @@ class Connector(BaseConnector):
     def __init__(self, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, car_connectivity, config)
         LOG.info("Loading skoda connector with config %s", self.config)
+
+        self._background_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
 
         username: Optional[str] = None
         password: Optional[str] = None
@@ -72,9 +79,15 @@ class Connector(BaseConnector):
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
 
-        self.max_age: Optional[int] = 300
-        if 'maxAge' in self.config:
-            self.max_age = self.config['maxAge']
+        self.max_age: int = 300
+        if 'max_age' in self.config:
+            self.max_age = self.config['max_age']
+
+        self.intervall: int = 300
+        if 'interval' in self.config:
+            self.intervall = self.config['interval']
+            if self.intervall < 180:
+                raise ValueError('Interval must be at least 180 seconds')
 
         if username is None or password is None:
             raise AuthenticationError('Username or password not provided')
@@ -83,6 +96,16 @@ class Connector(BaseConnector):
         self._session: Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=username, password=password))
 
         self._elapsed: List[timedelta] = []
+
+    def startup(self) -> None:
+        self._background_thread = threading.Thread(target=self._background_loop, daemon=True)
+        self._background_thread.start()
+
+    def _background_loop(self) -> None:
+        self._stop_event.clear()
+        while not self._stop_event.is_set():
+            self.fetch_all()
+            self._stop_event.wait(self.intervall)
 
     def persist(self) -> None:
         """
@@ -106,6 +129,9 @@ class Connector(BaseConnector):
         Returns:
             None
         """
+        self._stop_event.set()
+        if self._background_thread is not None:
+            self._background_thread.join()
         self.persist()
         self._session.close()
         BaseConnector.shutdown(self)
@@ -159,11 +185,11 @@ class Connector(BaseConnector):
                                 if 'id' in capability_dict and capability_dict['id'] is not None:
                                     capability_id = capability_dict['id']
                                     found_capabilities.add(capability_id)
-                                    if capability_id in vehicle.capabilities:
-                                        capability: Capability = vehicle.capabilities[capability_id]
+                                    if vehicle.capabilities.has_capability(capability_id):
+                                        capability: Capability = vehicle.capabilities.get_capability(capability_id)  # pyright: ignore[reportAssignmentType]
                                     else:
-                                        capability = Capability(capability_id=capability_id, vehicle=vehicle)
-                                        vehicle.capabilities[capability_id] = capability
+                                        capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
+                                        vehicle.capabilities.add_capability(capability_id, capability)
                                     if 'expirationDate' in capability_dict and capability_dict['expirationDate'] is not None:
                                         expiration_date: datetime = robust_time_parse(capability_dict['expirationDate'])
                                         capability.expiration_date._set_value(expiration_date)  # pylint: disable=protected-access
@@ -176,11 +202,10 @@ class Connector(BaseConnector):
                                         capability.user_disabling_allowed._set_value(None)  # pylint: disable=protected-access
                                 else:
                                     raise APIError('Could not fetch capabilities, capability ID missing')
-                            for capability_id in vehicle.capabilities.keys() - found_capabilities:
-                                vehicle.capabilities[capability_id].enabled = False
-                                vehicle.capabilities.pop(capability_id)
+                            for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
+                                vehicle.capabilities.remove_capability(capability_id)
                         else:
-                            vehicle.capabilities = {}
+                            vehicle.capabilities.clear_capabilities()
 
                         self.fetch_vehicle_status(vehicle)
                     else:
@@ -223,7 +248,8 @@ class Connector(BaseConnector):
                                          'batterySupport']
         jobs: list[str] = []
         for capability_id in known_capabilities:
-            if capability_id in vehicle.capabilities.keys() and vehicle.capabilities[capability_id].enabled:
+            if vehicle.capabilities.has_capability(capability_id) \
+                    and vehicle.capabilities.get_capability(capability_id).enabled:  # pyright: ignore[reportOptionalMemberAccess]
                 jobs.append(capability_id)
 
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
@@ -503,3 +529,6 @@ class Connector(BaseConnector):
                 else:
                     raise RetrievalError from json_error
         return data
+
+    def get_version(self) -> str:
+        return __version__
