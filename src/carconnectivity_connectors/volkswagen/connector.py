@@ -11,8 +11,9 @@ from datetime import datetime, timedelta
 import requests
 
 from carconnectivity.garage import Garage
-from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError
-from carconnectivity.util import robust_time_parse, log_extra_keys
+from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
+    TemporaryAuthenticationError, ConfigurationError
+from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
 from carconnectivity.units import Length
 from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.doors import Doors
@@ -33,8 +34,8 @@ if TYPE_CHECKING:
 
     from carconnectivity.carconnectivity import CarConnectivity
 
-LOG: logging.Logger = logging.getLogger("carconnectivity-connector-volkswagen")
-LOG_API_DEBUG: logging.Logger = logging.getLogger("carconnectivity-connector-volkswagen-api-debug")
+LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen")
+LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen-api-debug")
 
 
 class Connector(BaseConnector):
@@ -48,10 +49,27 @@ class Connector(BaseConnector):
     """
     def __init__(self, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, car_connectivity, config)
-        LOG.info("Loading skoda connector with config %s", self.config)
 
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+
+        # Configure logging
+        if 'log_level' in config and config['log_level'] is not None:
+            config['log_level'] = config['log_level'].upper()
+            if config['log_level'] in logging.getLevelNamesMapping():
+                LOG.setLevel(config['log_level'])
+                logging.getLogger('requests').setLevel(config['log_level'])
+                logging.getLogger('urllib3').setLevel(config['log_level'])
+                logging.getLogger('oauthlib').setLevel(config['log_level'])
+            else:
+                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging.getLevelNamesMapping().keys())}')
+        if 'api_log_level' in config and config['api_log_level'] is not None:
+            config['api_log_level'] = config['api_log_level'].upper()
+            if config['api_log_level'] in logging.getLevelNamesMapping():
+                LOG_API.setLevel(config['api_log_level'])
+            else:
+                raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging.getLevelNamesMapping().keys())}')
+        LOG.info("Loading volkswagen connector with config %s", config_remove_credentials(self.config))
 
         username: Optional[str] = None
         password: Optional[str] = None
@@ -79,13 +97,13 @@ class Connector(BaseConnector):
             except FileNotFoundError as err:
                 raise AuthenticationError(f'{netrc_filename} netrc-file was not found. Create it or provide username and password in config') from err
 
-        self.intervall: int = 300
+        self.interval: int = 300
         if 'interval' in self.config:
-            self.intervall = self.config['interval']
-            if self.intervall < 180:
+            self.interval = self.config['interval']
+            if self.interval < 180:
                 raise ValueError('Interval must be at least 180 seconds')
 
-        self.max_age: int = self.intervall - 1
+        self.max_age: int = self.interval - 1
         if 'max_age' in self.config:
             self.max_age = self.config['max_age']
 
@@ -98,14 +116,28 @@ class Connector(BaseConnector):
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
-        self._background_thread = threading.Thread(target=self._background_loop, daemon=True)
+        self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.start()
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
         while not self._stop_event.is_set():
-            self.fetch_all()
-            self._stop_event.wait(self.intervall)
+            try:
+                self.fetch_all()
+            except TooManyRequestsError:
+                LOG.error('Retrieval error during update. Too many requests from your account. Will try again after 15 minutes')
+                self._stop_event.wait(900)
+            except RetrievalError:
+                LOG.error('Retrieval error during update. Will try again after configured interval of %ss', self.interval)
+                self._stop_event.wait(self.interval)
+            except APICompatibilityError:
+                LOG.error('API compatability error during update. Will try again after configured interval of %ss', self.interval)
+                self._stop_event.wait(self.interval)
+            except TemporaryAuthenticationError:
+                LOG.error('Temporary authentification error during update. Will try again after configured interval of %ss', self.interval)
+                self._stop_event.wait(self.interval)
+            else:
+                self._stop_event.wait(self.interval)
 
     def persist(self) -> None:
         """
@@ -129,6 +161,11 @@ class Connector(BaseConnector):
         Returns:
             None
         """
+        # Disable and remove all vehicles managed soley by this connector
+        for vehicle in self.car_connectivity.garage.list_vehicles():
+            if len(vehicle.managing_connectors) == 1 and self in vehicle.managing_connectors:
+                self.car_connectivity.garage.remove_vehicle(vehicle.id)
+                vehicle.enabled = False
         self._stop_event.set()
         if self._background_thread is not None:
             self._background_thread.join()
@@ -293,13 +330,13 @@ class Connector(BaseConnector):
                                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
-                                LOG_API_DEBUG.warning('Unknown car type %s', fuel_level_status['carType'])
-                        log_extra_keys(LOG_API_DEBUG, 'fuelLevelStatus', data['measurements']['fuelLevelStatus'], {'carCapturedTimestamp', 'carType'})
+                                LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
+                        log_extra_keys(LOG_API, 'fuelLevelStatus', data['measurements']['fuelLevelStatus'], {'carCapturedTimestamp', 'carType'})
                 if 'rangeStatus' in data['measurements'] and data['measurements']['rangeStatus'] is not None:
                     if 'value' in data['measurements']['rangeStatus'] and data['measurements']['rangeStatus']['value'] is not None:
                         range_status = data['measurements']['rangeStatus']['value']
                         # TODO: Implement the rangeStatus
-                        log_extra_keys(LOG_API_DEBUG, 'rangeStatus', range_status, set())
+                        log_extra_keys(LOG_API, 'rangeStatus', range_status, set())
                 if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
                     if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
                         odometer_status = data['measurements']['odometerStatus']['value']
@@ -311,10 +348,10 @@ class Connector(BaseConnector):
                             vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
                         else:
                             vehicle.odometer._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API_DEBUG, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
+                        log_extra_keys(LOG_API, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
                 else:
                     vehicle.odometer._set_value(None)  # pylint: disable=protected-access
-                log_extra_keys(LOG_API_DEBUG, 'measurements', data['measurements'], {'fuelLevelStatus', 'rangeStatus', 'odometerStatus'})
+                log_extra_keys(LOG_API, 'measurements', data['measurements'], {'fuelLevelStatus', 'rangeStatus', 'odometerStatus'})
             else:
                 vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'access' in data and data['access'] is not None:
@@ -352,13 +389,13 @@ class Connector(BaseConnector):
                                             door.open_state._set_value(Doors.OpenState.UNSUPPORTED, measured=captured_at)  # pylint: disable=protected-access
                                         else:
                                             door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                            LOG_API_DEBUG.info('Unknown door status %s', door_status['status'])
+                                            LOG_API.info('Unknown door status %s', door_status['status'])
                                     else:
                                         door.open_state._set_value(None)  # pylint: disable=protected-access
                                         door.lock_state._set_value(None)  # pylint: disable=protected-access
                                 else:
                                     raise APIError('Could not fetch door status, door ID missing')
-                                log_extra_keys(LOG_API_DEBUG, 'doors', door_status, {'name', 'status'})
+                                log_extra_keys(LOG_API, 'doors', door_status, {'name', 'status'})
                             if all_doors_closed:
                                 vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
                             else:
@@ -371,7 +408,7 @@ class Connector(BaseConnector):
                                 elif access_status['doorLockStatus'] == 'invalid':
                                     vehicle.doors.lock_state._set_value(Doors.LockState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                                 else:
-                                    LOG_API_DEBUG.info('Unknown door lock status %s', access_status['doorLockStatus'])
+                                    LOG_API.info('Unknown door lock status %s', access_status['doorLockStatus'])
                                     vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
                             else:
                                 vehicle.doors.lock_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
@@ -412,7 +449,7 @@ class Connector(BaseConnector):
                                             window.open_state._set_value(Windows.OpenState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                                         else:
                                             window.open_state._set_value(Windows.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                            LOG_API_DEBUG.info('Unknown window status %s', window_status['status'])
+                                            LOG_API.info('Unknown window status %s', window_status['status'])
                                     else:
                                         window.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                                 else:
@@ -425,12 +462,12 @@ class Connector(BaseConnector):
                             vehicle.windows.open_state._set_value(None)  # pylint: disable=protected-access
                         for window_id in vehicle.windows.windows.keys() - seen_window_ids:
                             vehicle.windows.windows[window_id].enabled = False
-                        log_extra_keys(LOG_API_DEBUG, 'accessStatus', access_status, {'carCapturedTimestamp',
-                                                                                      'doors',
-                                                                                      'overallStatus',
-                                                                                      'doorLockStatus',
-                                                                                      'windows'})
-                log_extra_keys(LOG_API_DEBUG, 'access', data['access'], {'accessStatus'})
+                        log_extra_keys(LOG_API, 'accessStatus', access_status, {'carCapturedTimestamp',
+                                                                                'doors',
+                                                                                'overallStatus',
+                                                                                'doorLockStatus',
+                                                                                'windows'})
+                log_extra_keys(LOG_API, 'access', data['access'], {'accessStatus'})
             else:
                 vehicle.doors.lock_state._set_value(None)  # pylint: disable=protected-access
                 vehicle.doors.open_state._set_value(None)  # pylint: disable=protected-access
@@ -465,19 +502,19 @@ class Connector(BaseConnector):
                                             light.light_state._set_value(Lights.LightState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                                         else:
                                             light.light_state._set_value(Lights.LightState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                            LOG_API_DEBUG.info('Unknown light status %s', light_status['status'])
+                                            LOG_API.info('Unknown light status %s', light_status['status'])
                                     else:
                                         light.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                                 else:
                                     raise APIError('Could not fetch light status, light ID missing')
-                                log_extra_keys(LOG_API_DEBUG, 'lights', light_status, {'name', 'status'})
+                                log_extra_keys(LOG_API, 'lights', light_status, {'name', 'status'})
                             if all_lights_off:
                                 vehicle.lights.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
                             else:
                                 vehicle.lights.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
                         else:
                             vehicle.lights.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API_DEBUG, 'lights', lights_status, {'carCapturedTimestamp', 'lights'})
+                        log_extra_keys(LOG_API, 'lights', lights_status, {'carCapturedTimestamp', 'lights'})
                     for light_id in vehicle.lights.lights.keys() - seen_light_ids:
                         vehicle.lights.lights[light_id].enabled = False
                 else:
@@ -486,7 +523,7 @@ class Connector(BaseConnector):
             else:
                 vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
                 vehicle.lights.enabled = False
-            log_extra_keys(LOG_API_DEBUG, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights'})
+            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights'})
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
