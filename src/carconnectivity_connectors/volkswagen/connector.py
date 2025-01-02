@@ -112,6 +112,7 @@ class Connector(BaseConnector):
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
         self._session: Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=username, password=password))
+        self._session.refresh()
 
         self._elapsed: List[timedelta] = []
 
@@ -193,7 +194,6 @@ class Connector(BaseConnector):
         garage: Garage = self.car_connectivity.garage
         url = 'https://emea.bff.cariad.digital/vehicle/v1/vehicles'
         data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
-        print(data)
 
         seen_vehicle_vins: set[str] = set()
         if data is not None:
@@ -240,9 +240,6 @@ class Connector(BaseConnector):
                                 else:
                                     raise APIError('Could not fetch capabilities, capability ID missing')
                             for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
-                                print(vehicle.capabilities.capabilities.keys())
-                                print(found_capabilities)
-                                print(vehicle.capabilities.capabilities.keys() - found_capabilities)
                                 vehicle.capabilities.remove_capability(capability_id)
                         else:
                             vehicle.capabilities.clear_capabilities()
@@ -299,7 +296,6 @@ class Connector(BaseConnector):
 
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
         data: Dict[str, Any] | None = self._fetch_data(url, self._session)
-        print(data)
         if data is not None:
             if 'measurements' in data and data['measurements'] is not None:
                 if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:

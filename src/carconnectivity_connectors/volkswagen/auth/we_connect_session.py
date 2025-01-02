@@ -57,31 +57,21 @@ class WeConnectSession(VWWebSession):
         self,
         method,
         url,
-        params=None,
         data=None,
         headers=None,
-        cookies=None,
-        files=None,
-        auth=None,
-        timeout=None,
-        allow_redirects=True,
-        proxies=None,
-        hooks=None,
-        stream=None,
-        verify=None,
-        cert=None,
-        json=None,  # pylint: disable=redefined-outer-name
         withhold_token=False,
         access_type=AccessType.ACCESS,
         token=None,
+        timeout=None,
         **kwargs
     ):
         """Intercept all requests and add weconnect-trace-id header."""
 
-        trace_id: str = secrets.token_hex(16)
-        weconnect_trace_id = f"{trace_id[:8]}-{trace_id[8:12]}-{trace_id[12:16]}-{trace_id[16:20]}-{trace_id[20:]}".upper()
+        import secrets
+        traceId = secrets.token_hex(16)
+        we_connect_trace_id = (traceId[:8] + '-' + traceId[8:12] + '-' + traceId[12:16] + '-' + traceId[16:20] + '-' + traceId[20:]).upper()
         headers = headers or {}
-        headers['weconnect-trace-id'] = weconnect_trace_id
+        headers['weconnect-trace-id'] = we_connect_trace_id
 
         return super(WeConnectSession, self).request(
             method, url, headers=headers, data=data, withhold_token=withhold_token, access_type=access_type, token=token, timeout=timeout, **kwargs
@@ -90,9 +80,9 @@ class WeConnectSession(VWWebSession):
     def login(self):
         super(WeConnectSession, self).login()
         # retrieve authorization URL
-        authorization_url = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
+        authorization_url_str: str = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
         # perform web authentication
-        response = self.do_web_auth(authorization_url)
+        response = self.do_web_auth(authorization_url_str)
         # fetch tokens from web authentication response
         self.fetch_tokens('https://emea.bff.cariad.digital/user-login/login/v1',
                           authorization_response=response)
@@ -114,7 +104,6 @@ class WeConnectSession(VWWebSession):
 
         # add required parameters redirect_uri and nonce to the authorization URL
         auth_url: str = add_params_to_uri('https://emea.bff.cariad.digital/user-login/v1/authorize', params)
-
         try_login_response: requests.Response = self.get(auth_url, allow_redirects=False, access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
         if try_login_response.status_code != requests.codes['see_other'] or 'Location' not in try_login_response.headers:
             raise AuthenticationError('Authorization URL could not be fetched due to WeConnect failure')
