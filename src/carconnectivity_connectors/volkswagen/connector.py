@@ -19,6 +19,7 @@ from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
+from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
@@ -345,11 +346,6 @@ class Connector(BaseConnector):
                             except ValueError:
                                 LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
                         log_extra_keys(LOG_API, 'fuelLevelStatus', data['measurements']['fuelLevelStatus'], {'carCapturedTimestamp', 'carType'})
-                if 'rangeStatus' in data['measurements'] and data['measurements']['rangeStatus'] is not None:
-                    if 'value' in data['measurements']['rangeStatus'] and data['measurements']['rangeStatus']['value'] is not None:
-                        range_status = data['measurements']['rangeStatus']['value']
-                        # TODO: Implement the rangeStatus
-                        log_extra_keys(LOG_API, 'rangeStatus', range_status, set())
                 if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
                     if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
                         odometer_status = data['measurements']['odometerStatus']['value']
@@ -364,9 +360,70 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
                 else:
                     vehicle.odometer._set_value(None)  # pylint: disable=protected-access
-                log_extra_keys(LOG_API, 'measurements', data['measurements'], {'fuelLevelStatus', 'rangeStatus', 'odometerStatus'})
+                log_extra_keys(LOG_API, 'measurements', data['measurements'], {'fuelLevelStatus', 'odometerStatus'})
             else:
                 vehicle.odometer._set_value(None)  # pylint: disable=protected-access
+            if 'fuelStatus' in data and data['fuelStatus'] is not None:
+                if 'rangeStatus' in data['fuelStatus'] and data['fuelStatus']['rangeStatus'] is not None:
+                    if 'value' in data['measurements']['rangeStatus'] and data['fuelStatus']['rangeStatus']['value'] is not None:
+                        range_status = data['fuelStatus']['rangeStatus']['value']
+                        if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
+                        drive_ids: set[str] = {'primary', 'secondary'}
+                        for drive_id in drive_ids:
+                            if f'{drive_id}Engine' in range_status and range_status[f'{drive_id}Engine'] is not None:
+                                try:
+                                    engine_type: GenericDrive.Type = GenericDrive.Type(range_status[f'{drive_id}Engine']['type'])
+                                except ValueError:
+                                    LOG_API.warning('Unknown engine_type type %s', range_status[f'{drive_id}Engine']['type'])
+                                    engine_type: GenericDrive.Type = GenericDrive.Type.UNKNOWN
+
+                                if drive_id in vehicle.drives.drives:
+                                    drive: GenericDrive = vehicle.drives.drives[drive_id]
+                                else:
+                                    if engine_type == GenericDrive.Type.ELECTRIC:
+                                        drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                                    elif engine_type in [GenericDrive.Type.FUEL,
+                                                         GenericDrive.Type.GASOLINE,
+                                                         GenericDrive.Type.PETROL,
+                                                         GenericDrive.Type.DIESEL,
+                                                         GenericDrive.Type.CNG,
+                                                         GenericDrive.Type.LPG]:
+                                        drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
+                                    else:
+                                        drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
+                                    drive.type._set_value(engine_type)  # pylint: disable=protected-access
+                                    vehicle.drives.add_drive(drive)
+                                if 'currentSOC_pct' in range_status[f'{drive_id}Engine'] \
+                                        and range_status[f'{drive_id}Engine']['currentSOC_pct'] is not None:
+                                    # pylint: disable-next=protected-access
+                                    drive.level._set_value(value=range_status[f'{drive_id}Engine']['currentSOC_pct'], measured=captured_at)
+                                elif 'currentFuelLevel_pct' in range_status[f'{drive_id}Engine'] \
+                                        and range_status[f'{drive_id}Engine']['currentFuelLevel_pct'] is not None:
+                                    # pylint: disable-next=protected-access
+                                    drive.level._set_value(value=range_status[f'{drive_id}Engine']['currentFuelLevel_pct'], measured=captured_at)
+                                else:
+                                    drive.level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                                if 'remainingRange_km' in range_status[f'{drive_id}Engine'] \
+                                        and range_status[f'{drive_id}Engine']['remainingRange_km'] is not None:
+                                    # pylint: disable-next=protected-access
+                                    drive.range._set_value(value=range_status[f'{drive_id}Engine']['remainingRange_km'], measured=captured_at, unit=Length.KM)
+                                else:
+                                    drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+
+                                log_extra_keys(LOG_API, f'{drive_id}Engine', range_status[f'{drive_id}Engine'], {'type',
+                                                                                                                 'currentSOC_pct',
+                                                                                                                 'currentFuelLevel_pct'
+                                                                                                                 'remainingRange_km'})
+                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'primaryEngine', 'secondaryEngine'})
+                    else:
+                        vehicle.drives.enabled = False
+                else:
+                    vehicle.drives.enabled = False
+            else:
+                vehicle.drives.enabled = False
+
             if 'access' in data and data['access'] is not None:
                 if 'accessStatus' in data['access'] and data['access']['accessStatus'] is not None:
                     if 'value' in data['access']['accessStatus'] and data['access']['accessStatus']['value'] is not None:
