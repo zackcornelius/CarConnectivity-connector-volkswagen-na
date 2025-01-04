@@ -106,8 +106,8 @@ class Connector(BaseConnector):
         interval: int = 300
         if 'interval' in self.config:
             interval = self.config['interval']
-            if interval < 300:
-                raise ValueError('Intervall must be at least 300 seconds')
+            if interval < 180:
+                raise ValueError('Intervall must be at least 180 seconds')
         self.max_age: int = interval - 1
         if 'max_age' in self.config:
             self.max_age = self.config['max_age']

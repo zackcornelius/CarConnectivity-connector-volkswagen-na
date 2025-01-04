@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from typing import Tuple, Dict
 
 
-LOG: logging.Logger = logging.getLogger("carconnectivity-connector-volkswagen")
+LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen.auth")
 
 
 class WeConnectSession(VWWebSession):
