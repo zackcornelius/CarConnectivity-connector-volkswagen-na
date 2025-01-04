@@ -7,7 +7,7 @@ import time
 import logging
 import requests
 from jwt import JWT
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 
 from oauthlib.common import UNICODE_ASCII_CHARACTER_SET, generate_nonce, generate_token
 from oauthlib.oauth2.rfc6749.parameters import parse_authorization_code_response, parse_token_response, prepare_grant_uri
@@ -154,8 +154,8 @@ class OpenIDSession(requests.Session):
                         meta_data = jwt_instance.decode(new_token['id_token'], do_verify=False)
                         if 'exp' in meta_data:
                             new_token['expires_at'] = meta_data['exp']
-                            expires_at = datetime.fromtimestamp(meta_data['exp'], tz=UTC)
-                            new_token['expires_in'] = (expires_at - datetime.now(tz=UTC)).total_seconds()
+                            expires_at = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
+                            new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
                         else:
                             new_token['expires_in'] = 3600
                     else:
