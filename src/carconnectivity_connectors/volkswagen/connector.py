@@ -23,6 +23,7 @@ from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
+from carconnectivity_connectors.volkswagen.auth.we_connect_session import WeConnectSession
 from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle, \
     VolkswagenHybridVehicle
 from carconnectivity_connectors.volkswagen.capability import Capability
@@ -31,8 +32,6 @@ from carconnectivity_connectors.volkswagen._version import __version__
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any
-
-    from requests import Session
 
     from carconnectivity.carconnectivity import CarConnectivity
 
@@ -117,7 +116,10 @@ class Connector(BaseConnector):
             raise AuthenticationError('Username or password not provided')
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
-        self._session: Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=username, password=password))
+        session: requests.Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=username, password=password))
+        if not isinstance(session, WeConnectSession):
+            raise AuthenticationError('Could not create session')
+        self._session: WeConnectSession = session
         self._session.refresh()
 
         self._elapsed: List[timedelta] = []
@@ -221,7 +223,7 @@ class Connector(BaseConnector):
                         seen_vehicle_vins.add(vehicle_dict['vin'])
                         vehicle: Optional[VolkswagenVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if vehicle is None:
-                            vehicle = VolkswagenVehicle(vin=vehicle_dict['vin'], garage=garage)
+                            vehicle = VolkswagenVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self)
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'nickname' in vehicle_dict and vehicle_dict['nickname'] is not None:
