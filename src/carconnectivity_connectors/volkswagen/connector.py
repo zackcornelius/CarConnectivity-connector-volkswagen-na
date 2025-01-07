@@ -7,7 +7,7 @@ import threading
 import os
 import logging
 import netrc
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import requests
 
 from carconnectivity.garage import Garage
@@ -135,7 +135,7 @@ class Connector(BaseConnector):
             try:
                 try:
                     self.fetch_all()
-                    self.last_update._set_value(value=datetime.now())  # pylint: disable=protected-access
+                    self.last_update._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access
                     if self.interval.value is not None:
                         interval: int = self.interval.value.total_seconds()
                 except Exception:
