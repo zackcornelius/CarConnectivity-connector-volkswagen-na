@@ -120,6 +120,8 @@ class Connector(BaseConnector):
         if not isinstance(session, WeConnectSession):
             raise AuthenticationError('Could not create session')
         self._session: WeConnectSession = session
+        self._session.retries = 3
+        self._session.timeout = 180
         self._session.refresh()
 
         self._elapsed: List[timedelta] = []
