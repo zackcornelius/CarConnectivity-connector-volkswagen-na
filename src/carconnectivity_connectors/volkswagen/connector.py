@@ -369,7 +369,7 @@ class Connector(BaseConnector):
                 vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'fuelStatus' in data and data['fuelStatus'] is not None:
                 if 'rangeStatus' in data['fuelStatus'] and data['fuelStatus']['rangeStatus'] is not None:
-                    if 'value' in data['measurements']['rangeStatus'] and data['fuelStatus']['rangeStatus']['value'] is not None:
+                    if 'value' in data['fuelStatus']['rangeStatus'] and data['fuelStatus']['rangeStatus']['value'] is not None:
                         range_status = data['fuelStatus']['rangeStatus']['value']
                         if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
