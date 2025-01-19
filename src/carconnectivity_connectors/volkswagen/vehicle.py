@@ -32,6 +32,7 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
             self.capabilities: Capabilities = Capabilities(vehicle=self)
+        self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access
 
     def __str__(self) -> str:
         return_string: str = f'\t{self.capabilities}\n'
