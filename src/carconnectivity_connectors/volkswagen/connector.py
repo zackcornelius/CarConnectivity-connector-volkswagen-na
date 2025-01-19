@@ -139,11 +139,11 @@ class Connector(BaseConnector):
                     self.fetch_all()
                     self.last_update._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access
                     if self.interval.value is not None:
-                        interval: int = self.interval.value.total_seconds()
+                        interval: float = self.interval.value.total_seconds()
                 except Exception:
                     self.connected._set_value(value=False)  # pylint: disable=protected-access
                     if self.interval.value is not None:
-                        interval: int = self.interval.value.total_seconds()
+                        interval: float = self.interval.value.total_seconds()
                     raise
             except TooManyRequestsError as err:
                 LOG.error('Retrieval error during update. Too many requests from your account (%s). Will try again after 15 minutes', str(err))
