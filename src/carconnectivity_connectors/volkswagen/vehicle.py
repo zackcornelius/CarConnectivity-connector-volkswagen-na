@@ -34,10 +34,6 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
             self.capabilities: Capabilities = Capabilities(vehicle=self)
         self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access
 
-    def __str__(self) -> str:
-        return_string: str = f'\t{self.capabilities}\n'
-        return return_string
-
 
 class VolkswagenElectricVehicle(ElectricVehicle, VolkswagenVehicle):
     """

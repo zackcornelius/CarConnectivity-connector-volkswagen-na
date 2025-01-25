@@ -89,12 +89,6 @@ class Capabilities(GenericObject):
         """
         return capability_id in self.__capabilities
 
-    def __str__(self) -> str:
-        return_string = 'Capabilities:\n'
-        for capability in self.__capabilities.values():
-            return_string += f'\t{capability}\n'
-        return return_string
-
 
 class Capability(GenericObject):
     """
@@ -114,14 +108,6 @@ class Capability(GenericObject):
         self.statuses = list[Capability.Status]
         self.enabled = True
         self.delay_notifications = False
-
-    def __str__(self) -> str:
-        return_string = f'{self.capability_id}'
-        if self.expiration_date.enabled:
-            return_string += f' expires: {self.expiration_date}'
-        if self.user_disabling_allowed.enabled:
-            return_string += f' user_disabling_allowed: {self.user_disabling_allowed}'
-        return return_string
 
     class Status(IntEnum):
         """
