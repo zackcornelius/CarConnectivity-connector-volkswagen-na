@@ -50,7 +50,7 @@ class VWWebSession(OpenIDSession):
                       'application/signed-exchange;v=b3',
             'accept-language': 'en-US,en;q=0.9',
             'accept-encoding': 'gzip, deflate',
-            'x-requested-with': 'de.volkswagen.carnet.eu.eremote',
+            'x-requested-with': 'com.volkswagen.weconnect',
             'upgrade-insecure-requests': '1',
         })
 

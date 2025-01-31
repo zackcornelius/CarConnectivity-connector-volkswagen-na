@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import threading
 
+import json
 import os
 import logging
 import netrc
@@ -12,7 +13,7 @@ import requests
 
 from carconnectivity.garage import Garage
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
-    TemporaryAuthenticationError, ConfigurationError
+    TemporaryAuthenticationError, ConfigurationError, SetterError, CommandError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
 from carconnectivity.units import Length
 from carconnectivity.vehicle import GenericVehicle
@@ -20,18 +21,25 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute
+from carconnectivity.units import Temperature
+from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand
+from carconnectivity.climatization import Climatization
+from carconnectivity.commands import Commands
+
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
 from carconnectivity_connectors.volkswagen.auth.we_connect_session import WeConnectSession
 from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle, \
     VolkswagenHybridVehicle
+from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
 from carconnectivity_connectors.volkswagen.capability import Capability
 from carconnectivity_connectors.volkswagen._version import __version__
+from carconnectivity_connectors.volkswagen.command_impl import SpinCommand
 
 
 if TYPE_CHECKING:
-    from typing import Dict, List, Optional, Any
+    from typing import Dict, List, Optional, Any, Union
 
     from carconnectivity.carconnectivity import CarConnectivity
 
@@ -56,6 +64,7 @@ class Connector(BaseConnector):
 
         self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
+        self.commands: Commands = Commands(parent=self)
 
         # Configure logging
         if 'log_level' in config and config['log_level'] is not None:
@@ -76,6 +85,11 @@ class Connector(BaseConnector):
                 raise ConfigurationError(f'Invalid log level: "{config["log_level"]}" not in {list(logging._nameToLevel.keys())}')
         LOG.info("Loading volkswagen connector with config %s", config_remove_credentials(self.config))
 
+        if 'spin' in config and config['spin'] is not None:
+            self._spin: Optional[str] = config['spin']
+        else:
+            self._spin = None
+
         username: Optional[str] = None
         password: Optional[str] = None
         if 'username' in self.config and 'password' in self.config:
@@ -91,7 +105,13 @@ class Connector(BaseConnector):
                 secret: tuple[str, str, str] | None = secrets.authenticators("volkswagen")
                 if secret is None:
                     raise AuthenticationError(f'Authentication using {netrc_filename} failed: volkswagen not found in netrc')
-                username, _, password = secret
+                username, account, password = secret
+
+                if self._spin is None and account is not None:
+                    try:
+                        self._spin = account
+                    except ValueError as err:
+                        LOG.error('Could not parse spin from netrc: %s', err)
             except netrc.NetrcParseError as err:
                 LOG.error('Authentification using %s failed: %s', netrc_filename, err)
                 raise AuthenticationError(f'Authentication using {netrc_filename} failed: {err}') from err
@@ -119,10 +139,10 @@ class Connector(BaseConnector):
         session: requests.Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=username, password=password))
         if not isinstance(session, WeConnectSession):
             raise AuthenticationError('Could not create session')
-        self._session: WeConnectSession = session
-        self._session.retries = 3
-        self._session.timeout = 180
-        self._session.refresh()
+        self.session: WeConnectSession = session
+        self.session.retries = 3
+        self.session.timeout = 180
+        self.session.refresh()
 
         self._elapsed: List[timedelta] = []
 
@@ -192,7 +212,7 @@ class Connector(BaseConnector):
         if self._background_thread is not None:
             self._background_thread.join()
         self.persist()
-        self._session.close()
+        self.session.close()
         BaseConnector.shutdown(self)
 
     def fetch_all(self) -> None:
@@ -201,6 +221,12 @@ class Connector(BaseConnector):
 
         This method calls the `fetch_vehicles` method to retrieve vehicle data.
         """
+        # Add spin command
+        if self.commands is not None and not self.commands.contains_command('spin'):
+            spin_command = SpinCommand(parent=self.commands)
+            spin_command._add_on_set_hook(self.__on_spin)  # pylint: disable=protected-access
+            spin_command.enabled = True
+            self.commands.add_command(spin_command)
         self.fetch_vehicles()
         self.car_connectivity.transaction_end()
 
@@ -215,7 +241,7 @@ class Connector(BaseConnector):
         """
         garage: Garage = self.car_connectivity.garage
         url = 'https://emea.bff.cariad.digital/vehicle/v1/vehicles'
-        data: Dict[str, Any] | None = self._fetch_data(url, session=self._session)
+        data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
 
         seen_vehicle_vins: set[str] = set()
         if data is not None:
@@ -265,6 +291,14 @@ class Connector(BaseConnector):
                                 vehicle.capabilities.remove_capability(capability_id)
                         else:
                             vehicle.capabilities.clear_capabilities()
+
+                        if vehicle.capabilities.has_capability('vehicleWakeUpTrigger'):
+                            if vehicle.commands is not None and vehicle.commands.commands is not None \
+                                    and not vehicle.commands.contains_command('wake-sleep'):
+                                wake_sleep_command = WakeSleepCommand(parent=vehicle.commands)
+                                wake_sleep_command._add_on_set_hook(self.__on_wake_sleep)  # pylint: disable=protected-access
+                                wake_sleep_command.enabled = True
+                                vehicle.commands.add_command(wake_sleep_command)
 
                         self.fetch_vehicle_status(vehicle)
                     else:
@@ -317,7 +351,7 @@ class Connector(BaseConnector):
             return
 
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
-        data: Dict[str, Any] | None = self._fetch_data(url, self._session)
+        data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if data is not None:
             if 'measurements' in data and data['measurements'] is not None:
                 if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
@@ -349,7 +383,7 @@ class Connector(BaseConnector):
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
                                 LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
-                        log_extra_keys(LOG_API, 'fuelLevelStatus', data['measurements']['fuelLevelStatus'], {'carCapturedTimestamp', 'carType'})
+                        log_extra_keys(LOG_API, 'fuelLevelStatus', fuel_level_status, {'carCapturedTimestamp', 'carType'})
                 if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
                     if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
                         odometer_status = data['measurements']['odometerStatus']['value']
@@ -597,7 +631,196 @@ class Connector(BaseConnector):
             else:
                 vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
                 vehicle.lights.enabled = False
-            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights'})
+            if 'climatisation' in data and data['climatisation'] is not None:
+                if not isinstance(vehicle.climatization, VolkswagenClimatization):
+                    vehicle.climatization = VolkswagenClimatization(origin=vehicle.climatization)
+                assert isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings)
+                if vehicle.climatization is not None and vehicle.climatization.commands is not None \
+                        and not vehicle.climatization.commands.contains_command('start-stop'):
+                    start_stop_command = ClimatizationStartStopCommand(parent=vehicle.climatization.commands)
+                    start_stop_command._add_on_set_hook(self.__on_air_conditioning_start_stop)  # pylint: disable=protected-access
+                    start_stop_command.enabled = True
+                    vehicle.climatization.commands.add_command(start_stop_command)
+                if 'climatisationStatus' in data['climatisation'] and data['climatisation']['climatisationStatus'] is not None:
+                    climatisation_status = data['climatisation']['climatisationStatus']
+                    if 'value' in climatisation_status and climatisation_status['value'] is not None:
+                        climatisation_status = climatisation_status['value']
+                        if 'carCapturedTimestamp' not in climatisation_status or climatisation_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(climatisation_status['carCapturedTimestamp'])
+                        if 'climatisationState' in climatisation_status and climatisation_status['climatisationState'] is not None:
+                            if climatisation_status['climatisationState'] in VolkswagenClimatization.ClimatizationState:
+                                climatization_state: VolkswagenClimatization.ClimatizationState = \
+                                    VolkswagenClimatization.ClimatizationState(climatisation_status['climatisationState'])
+                            else:
+                                LOG_API.info('Unknown climatization state %s not in %s', climatisation_status['climatisationState'],
+                                             str(VolkswagenClimatization.ClimatizationState))
+                                climatization_state = VolkswagenClimatization.ClimatizationState.UNKNOWN
+                            vehicle.climatization.state._set_value(value=climatization_state, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.climatization.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'remainingClimatisationTime_min' in climatisation_status and climatisation_status['remainingClimatisationTime_min'] is not None:
+                            remaining_duration: timedelta = timedelta(minutes=climatisation_status['remainingClimatisationTime_min'])
+                            estimated_date_reached: datetime = captured_at + remaining_duration
+                            estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)
+                        else:
+                            vehicle.climatization.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'climatisationStatus', climatisation_status, {'carCapturedTimestamp', 'climatisationState',
+                                                                                              'remainingClimatisationTime_min'})
+                else:
+                    vehicle.climatization.state._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.estimated_date_reached._set_value(None)  # pylint: disable=protected-access
+                if 'climatisationSettings' in data['climatisation'] and data['climatisation']['climatisationSettings'] is not None:
+                    climatisation_settings = data['climatisation']['climatisationSettings']
+                    if 'value' in climatisation_settings and climatisation_settings['value'] is not None:
+                        climatisation_settings = climatisation_settings['value']
+                        if 'carCapturedTimestamp' not in climatisation_settings or climatisation_settings['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(climatisation_settings['carCapturedTimestamp'])
+                        preferred_unit: Temperature = Temperature.C
+                        if 'unitInCar' in climatisation_settings and climatisation_settings['unitInCar'] is not None:
+                            if climatisation_settings['unitInCar'] == 'farenheit':
+                                preferred_unit = Temperature.F
+                                vehicle.climatization.settings.unit_in_car = Temperature.F
+                            elif climatisation_settings['unitInCar'] == 'celsius':
+                                preferred_unit = Temperature.C
+                                vehicle.climatization.settings.unit_in_car = Temperature.C
+                            else:
+                                LOG_API.info('Unknown unitInCar %s', climatisation_settings['unitInCar'])
+                        if preferred_unit == Temperature.C and 'targetTemperature_C' in climatisation_settings:
+                            target_temperature: Optional[float] = climatisation_settings['targetTemperature_C']
+                            actual_unit: Optional[Temperature] = Temperature.C
+                        elif preferred_unit == Temperature.F and 'targetTemperature_F' in climatisation_settings:
+                            target_temperature = climatisation_settings['targetTemperature_F']
+                            actual_unit = Temperature.F
+                        elif 'targetTemperature_C' in climatisation_settings:
+                            target_temperature = climatisation_settings['targetTemperature_C']
+                            actual_unit = Temperature.C
+                        elif 'targetTemperature_F' in climatisation_settings:
+                            target_temperature = climatisation_settings['targetTemperature_F']
+                            actual_unit = Temperature.F
+                        else:
+                            target_temperature = None
+                            actual_unit = None
+                        vehicle.climatization.settings.target_temperature._set_value(value=target_temperature,  # pylint: disable=protected-access
+                                                                                     measured=captured_at,
+                                                                                     unit=actual_unit)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
+                        if 'climatisationWithoutExternalPower' in climatisation_settings \
+                                and climatisation_settings['climatisationWithoutExternalPower'] is not None:
+                            vehicle.climatization.settings.climatization_without_external_power._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['climatisationWithoutExternalPower'], measured=captured_at)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.climatization_without_external_power._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.climatization_without_external_power._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.climatization_without_external_power._set_value(None, measured=captured_at)
+                        if 'climatizationAtUnlock' in climatisation_settings and climatisation_settings['climatizationAtUnlock'] is not None:
+                            vehicle.climatization.settings.climatization_at_unlock._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['climatizationAtUnlock'], measured=captured_at)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.climatization_at_unlock._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.climatization_at_unlock._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.climatization_at_unlock._set_value(None, measured=captured_at)
+                        if 'windowHeatingEnabled' in climatisation_settings and climatisation_settings['windowHeatingEnabled'] is not None:
+                            vehicle.climatization.settings.window_heating._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['windowHeatingEnabled'], measured=captured_at)
+                        # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.window_heating._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.window_heating._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.window_heating._set_value(None, measured=captured_at)
+                        if 'zoneFrontLeftEnabled' in climatisation_settings and climatisation_settings['zoneFrontLeftEnabled'] is not None:
+                            vehicle.climatization.settings.front_zone_left_enabled._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['zoneFrontLeftEnabled'], measured=captured_at)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.front_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.front_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.front_zone_left_enabled._set_value(None, measured=captured_at)
+                        if 'zoneFrontRightEnabled' in climatisation_settings and climatisation_settings['zoneFrontRightEnabled'] is not None:
+                            vehicle.climatization.settings.front_zone_right_enabled._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['zoneFrontRightEnabled'], measured=captured_at)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.front_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.front_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.front_zone_right_enabled._set_value(None, measured=captured_at)
+                        if 'rearZoneLeftEnabled' in climatisation_settings and climatisation_settings['rearZoneLeftEnabled'] is not None:
+                            vehicle.climatization.settings.rear_zone_left_enabled._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['rearZoneLeftEnabled'], measured=captured_at)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.rear_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.rear_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.rear_zone_left_enabled._set_value(None, measured=captured_at)
+                        if 'rearZoneRightEnabled' in climatisation_settings and climatisation_settings['rearZoneRightEnabled'] is not None:
+                            vehicle.climatization.settings.rear_zone_right_enabled._set_value(  # pylint: disable=protected-access
+                                climatisation_settings['rearZoneRightEnabled'], measured=captured_at)
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.rear_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                            vehicle.climatization.settings.rear_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                        else:
+                            # pylint: disable-next=protected-access
+                            vehicle.climatization.settings.rear_zone_right_enabled._set_value(None, measured=captured_at)
+                        if vehicle.climatization.settings.front_zone_left_enabled.enabled \
+                                or vehicle.climatization.settings.front_zone_right_enabled.enabled \
+                                or vehicle.climatization.settings.rear_zone_left_enabled.enabled \
+                                or vehicle.climatization.settings.rear_zone_right_enabled.enabled:
+                            if vehicle.climatization.settings.front_zone_left_enabled.value \
+                                    or vehicle.climatization.settings.front_zone_right_enabled.value \
+                                    or vehicle.climatization.settings.rear_zone_left_enabled.value \
+                                    or vehicle.climatization.settings.rear_zone_right_enabled.value:
+                                vehicle.climatization.settings.seat_heating._set_value(True, measured=captured_at)  # pylint: disable=protected-access
+                            else:
+                                vehicle.climatization.settings.seat_heating._set_value(False, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.climatization.settings.seat_heating._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'heaterSource' in climatisation_settings and climatisation_settings['heaterSource'] is not None:
+                            if climatisation_settings['heaterSource'] in Climatization.Settings.HeaterSource:
+                                vehicle.climatization.settings.heater_source._set_value(  # pylint: disable=protected-access
+                                    Climatization.Settings.HeaterSource(climatisation_settings['heaterSource']), measured=captured_at)
+                            else:
+                                LOG_API.info('Unknown heater source %s', climatisation_settings['heaterSource'])
+                                # pylint: disable-next=protected-access
+                                vehicle.climatization.settings.heater_source._set_value(Climatization.Settings.HeaterSource.UNKNOWN, measured=captured_at)
+                        else:
+                            vehicle.climatization.settings.heater_source._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'climatisationSettings', climatisation_settings, {'carCapturedTimestamp',
+                                                                                                  'unitInCar',
+                                                                                                  'targetTemperature_C',
+                                                                                                  'targetTemperature_F',
+                                                                                                  'climatisationWithoutExternalPower',
+                                                                                                  'climatizationAtUnlock',
+                                                                                                  'windowHeatingEnabled',
+                                                                                                  'zoneFrontLeftEnabled',
+                                                                                                  'zoneFrontRightEnabled',
+                                                                                                  'heaterSource'})
+                else:
+                    vehicle.climatization.settings.target_temperature._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.climatization_without_external_power._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.climatization_at_unlock._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.window_heating._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.front_zone_left_enabled._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.front_zone_right_enabled._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.rear_zone_left_enabled._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.rear_zone_right_enabled._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.seat_heating._set_value(None)  # pylint: disable=protected-access
+                    vehicle.climatization.settings.heater_source._set_value(None)  # pylint: disable=protected-access
+
+                log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings'})
+            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation'})
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
@@ -656,3 +879,190 @@ class Connector(BaseConnector):
 
     def get_version(self) -> str:
         return __version__
+
+    def __on_air_conditioning_settings_change(self, attribute: GenericAttribute, value: Any) -> Any:
+        """
+        Callback for the climatization setting change.
+        """
+        if attribute.parent is None or not isinstance(attribute.parent, VolkswagenClimatization.Settings) \
+                or attribute.parent.parent is None \
+                or attribute.parent.parent.parent is None or not isinstance(attribute.parent.parent.parent, VolkswagenVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        settings: VolkswagenClimatization.Settings = attribute.parent
+        vehicle: VolkswagenVehicle = attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        if settings.target_temperature.enabled and settings.target_temperature.value is not None:
+            # Round target temperature to nearest 0.5
+            # Check if the attribute changed is the target_temperature attribute
+            if isinstance(attribute, TemperatureAttribute) and attribute.id == 'target_temperature':
+                setting_dict['targetTemperature'] = round(value * 2) / 2
+            else:
+                setting_dict['targetTemperature'] = round(settings.target_temperature.value * 2) / 2
+            if settings.unit_in_car == Temperature.C:
+                setting_dict['targetTemperatureUnit'] = 'celsius'
+            elif settings.target_temperature.unit == Temperature.F:
+                setting_dict['targetTemperatureUnit'] = 'farenheit'
+            else:
+                setting_dict['targetTemperatureUnit'] = 'celsius'
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'climatisation_without_external_power':
+            setting_dict['climatisationWithoutExternalPower'] = value
+        elif settings.climatization_without_external_power.enabled and settings.climatization_without_external_power.value is not None:
+            setting_dict['climatisationWithoutExternalPower'] = settings.climatization_without_external_power.value
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'climatization_at_unlock':
+            setting_dict['climatizationAtUnlock'] = value
+        elif settings.climatization_at_unlock.enabled and settings.climatization_at_unlock.value is not None:
+            setting_dict['climatizationAtUnlock'] = settings.climatization_at_unlock.value
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'window_heating':
+            setting_dict['windowHeatingEnabled'] = value
+        elif settings.window_heating.enabled and settings.window_heating.value is not None:
+            setting_dict['windowHeatingEnabled'] = settings.window_heating.value
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'front_zone_left_enabled':
+            setting_dict['zoneFrontLeftEnabled'] = value
+        elif settings.front_zone_left_enabled.enabled and settings.front_zone_left_enabled.value is not None:
+            setting_dict['zoneFrontLeftEnabled'] = settings.front_zone_left_enabled.value
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'front_zone_right_enabled':
+            setting_dict['zoneFrontRightEnabled'] = value
+        elif settings.front_zone_right_enabled.enabled and settings.front_zone_right_enabled.value is not None:
+            setting_dict['zoneFrontRightEnabled'] = settings.front_zone_right_enabled.value
+
+        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/climatisation/settings'
+        settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
+        if settings_response.status_code != requests.codes['ok']:
+            LOG.error('Could not set climatization settings (%s)', settings_response.status_code)
+            raise SetterError(f'Could not set value ({settings_response.status_code})')
+        return value
+
+    def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if start_stop_command.parent is None or start_stop_command.parent.parent is None \
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        vehicle: VolkswagenVehicle = start_stop_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        command_dict = {}
+        command_str: Optional[str] = None
+        if command_arguments['command'] == ClimatizationStartStopCommand.Command.START:
+            command_str = 'start'
+            if vehicle.climatization.settings is None:
+                raise CommandError('Could not control climatisation, there are no climatisation settings for the vehicle available.')
+            if 'target_temperature' in command_arguments:
+                # Round target temperature to nearest 0.5
+                command_dict['targetTemperature'] = round(command_arguments['target_temperature'] * 2) / 2
+            elif vehicle.climatization.settings.target_temperature is not None and vehicle.climatization.settings.target_temperature.enabled \
+                    and vehicle.climatization.settings.target_temperature.value is not None:
+                if isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
+                        and vehicle.climatization.settings.unit_in_car is not None:
+                    temperature_value: Optional[float] = vehicle.climatization.settings.target_temperature.temperature_in(
+                        vehicle.climatization.settings.unit_in_car)
+                else:
+                    temperature_value = vehicle.climatization.settings.target_temperature.value
+                if temperature_value is not None:
+                    command_dict['targetTemperature'] = round(temperature_value * 2) / 2
+            if 'target_temperature_unit' in command_arguments:
+                if command_arguments['target_temperature_unit'] == Temperature.C:
+                    command_dict['targetTemperatureUnit'] = 'celsius'
+                elif command_arguments['target_temperature_unit'] == Temperature.F:
+                    command_dict['targetTemperatureUnit'] = 'farenheit'
+                else:
+                    command_dict['targetTemperatureUnit'] = 'celsius'
+            elif isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
+                    and vehicle.climatization.settings.unit_in_car == Temperature.C:
+                command_dict['targetTemperatureUnit'] = 'celsius'
+            elif isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
+                    and vehicle.climatization.settings.unit_in_car == Temperature.F:
+                command_dict['targetTemperatureUnit'] = 'farenheit'
+            else:
+                command_dict['targetTemperatureUnit'] = 'celsius'
+
+            if vehicle.climatization.settings.climatization_without_external_power is not None \
+                    and vehicle.climatization.settings.climatization_without_external_power.enabled:
+                command_dict['climatisationWithoutExternalPower'] = vehicle.climatization.settings.climatization_without_external_power.value
+            if vehicle.climatization.settings.window_heating is not None and vehicle.climatization.settings.window_heating.enabled:
+                command_dict['windowHeatingEnabled'] = vehicle.climatization.settings.window_heating.value
+            if vehicle.climatization.settings.climatization_at_unlock is not None and vehicle.climatization.settings.climatization_at_unlock.enabled:
+                command_dict['climatizationAtUnlock'] = vehicle.climatization.settings.climatization_at_unlock.value
+            if isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings):
+                if vehicle.climatization.settings.front_zone_left_enabled is not None and vehicle.climatization.settings.front_zone_left_enabled.enabled:
+                    command_dict['zoneFrontLeftEnabled'] = vehicle.climatization.settings.front_zone_left_enabled.value
+                if vehicle.climatization.settings.front_zone_right_enabled is not None and vehicle.climatization.settings.front_zone_right_enabled.enabled:
+                    command_dict['zoneFrontRightEnabled'] = vehicle.climatization.settings.front_zone_right_enabled
+                if vehicle.climatization.settings.rear_zone_left_enabled is not None and vehicle.climatization.settings.rear_zone_left_enabled.enabled:
+                    command_dict['zoneRearLeftEnabled'] = vehicle.climatization.settings.rear_zone_left_enabled
+                if vehicle.climatization.settings.rear_zone_right_enabled is not None and vehicle.climatization.settings.rear_zone_right_enabled.enabled:
+                    command_dict['zoneRearRightEnabled'] = vehicle.climatization.settings.rear_zone_right_enabled
+            if vehicle.climatization.settings.heater_source is not None and vehicle.climatization.settings.heater_source.enabled:
+                command_dict['heaterSource'] = vehicle.climatization.settings.heater_source.value
+        elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
+            command_str = 'stop'
+        else:
+            raise CommandError(f'Unknown command {command_arguments["command"]}')
+
+        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/climatisation/{command_str}'
+        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+        if command_response.status_code != requests.codes['ok']:
+            LOG.error('Could not start/stop air conditioning (%s: %s)', command_response.status_code, command_response.text)
+            raise CommandError(f'Could not start/stop air conditioning ({command_response.status_code}: {command_response.text})')
+        return command_arguments
+
+    def __on_wake_sleep(self, wake_sleep_command: WakeSleepCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if wake_sleep_command.parent is None or wake_sleep_command.parent.parent is None \
+                or not isinstance(wake_sleep_command.parent.parent, GenericVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        vehicle: GenericVehicle = wake_sleep_command.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        if command_arguments['command'] == WakeSleepCommand.Command.WAKE:
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/vehiclewakeuptrigger'
+
+            command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+            if command_response.status_code not in (requests.codes['ok'], requests.codes['no_content']):
+                LOG.error('Could not execute wake command (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not execute wake command ({command_response.status_code}: {command_response.text})')
+        elif command_arguments['command'] == WakeSleepCommand.Command.SLEEP:
+            raise CommandError('Sleep command not supported by vehicle. Vehicle will put itself to sleep')
+        else:
+            raise CommandError(f'Unknown command {command_arguments["command"]}')
+        return command_arguments
+
+    def __on_spin(self, spin_command: SpinCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        del spin_command
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        command_dict = {}
+        if self._spin is None:
+            raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+        if 'spin' in command_arguments:
+            command_dict['spin'] = command_arguments['spin']
+        else:
+            if self._spin is None or self._spin == '':
+                raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+            command_dict['spin'] = self._spin
+        if command_arguments['command'] == SpinCommand.Command.VERIFY:
+            url = 'https://emea.bff.cariad.digital/vehicle/v1/spin/verify'
+        else:
+            raise CommandError(f'Unknown command {command_arguments["command"]}')
+        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+        if command_response.status_code != requests.codes['no_content']:
+            LOG.error('Could not execute spin command (%s: %s)', command_response.status_code, command_response.text)
+            raise CommandError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
+        else:
+            LOG.info('Spin verify command executed successfully')
+        return command_arguments
