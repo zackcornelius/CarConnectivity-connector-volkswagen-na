@@ -23,7 +23,7 @@ from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute
 from carconnectivity.units import Temperature
-from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand
 from carconnectivity.climatization import Climatization
 from carconnectivity.commands import Commands
 
@@ -47,6 +47,7 @@ LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen")
 LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen-api-debug")
 
 
+# pylint: disable=too-many-lines
 class Connector(BaseConnector):
     """
     Connector class for Skoda API connectivity.
@@ -300,7 +301,27 @@ class Connector(BaseConnector):
                                 wake_sleep_command.enabled = True
                                 vehicle.commands.add_command(wake_sleep_command)
 
+                        # Add honkAndFlash command if necessary capabilities are available
+                        if vehicle.capabilities.has_capability('honkAndFlash'):
+                            if vehicle.commands is not None and vehicle.commands.commands is not None \
+                                    and not vehicle.commands.contains_command('honk-flash'):
+                                honk_flash_command = HonkAndFlashCommand(parent=vehicle.commands, with_duration=True)
+                                honk_flash_command._add_on_set_hook(self.__on_honk_flash)  # pylint: disable=protected-access
+                                honk_flash_command.enabled = True
+                                vehicle.commands.add_command(honk_flash_command)
+
+                        # Add lock and unlock command
+                        if vehicle.capabilities.has_capability('access'):
+                            if vehicle.doors is not None and vehicle.doors.commands is not None and vehicle.doors.commands.commands is not None \
+                                    and not vehicle.doors.commands.contains_command('lock-unlock'):
+                                lock_unlock_command = LockUnlockCommand(parent=vehicle.doors.commands)
+                                lock_unlock_command._add_on_set_hook(self.__on_lock_unlock)  # pylint: disable=protected-access
+                                lock_unlock_command.enabled = True
+                                vehicle.doors.commands.add_command(lock_unlock_command)
+
                         self.fetch_vehicle_status(vehicle)
+                        if vehicle.capabilities.has_capability('parkingPosition'):
+                            self.fetch_parking_position(vehicle)
                     else:
                         raise APIError('Could not fetch vehicle data, VIN missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
@@ -822,6 +843,41 @@ class Connector(BaseConnector):
                 log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings'})
             log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation'})
 
+    def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:
+        """
+        Fetches the parking position of the given Volkswagen vehicle and updates the vehicle's position attributes.
+
+        Args:
+            vehicle (VolkswagenVehicle): The Volkswagen vehicle object whose parking position is to be fetched.
+
+        Raises:
+            ValueError: If the vehicle's VIN is None.
+            APIError: If the fetched data does not contain 'carCapturedTimestamp' or it is None.
+
+        Updates:
+            vehicle.position.latitude: The latitude of the vehicle's parking position.
+            vehicle.position.longitude: The longitude of the vehicle's parking position.
+        """
+        vin = vehicle.vin.value
+        if vin is None:
+            raise ValueError('vehicle.vin cannot be None')
+        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/parkingposition'
+        data: Dict[str, Any] | None = self._fetch_data(url, self.session)
+        if data is not None and 'data' in data and data['data'] is not None:
+            if 'carCapturedTimestamp' not in data['data'] or data['data']['carCapturedTimestamp'] is None:
+                raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+            captured_at: datetime = robust_time_parse(data['data']['carCapturedTimestamp'])
+
+            if 'lat' in data['data'] and data['data']['lat'] is not None and 'lon' in data['data'] and data['data']['lon'] is not None:
+                vehicle.position.latitude._set_value(data['data']['lat'], measured=captured_at)  # pylint: disable=protected-access
+                vehicle.position.longitude._set_value(data['data']['lon'], measured=captured_at)  # pylint: disable=protected-access
+            else:
+                vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+        else:
+            vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+            vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
         Records the elapsed time.
@@ -1037,6 +1093,75 @@ class Connector(BaseConnector):
             raise CommandError('Sleep command not supported by vehicle. Vehicle will put itself to sleep')
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
+        return command_arguments
+
+    def __on_honk_flash(self, honk_flash_command: HonkAndFlashCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if honk_flash_command.parent is None or honk_flash_command.parent.parent is None \
+                or not isinstance(honk_flash_command.parent.parent, GenericVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        vehicle: GenericVehicle = honk_flash_command.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        command_dict = {}
+        if command_arguments['command'] in [HonkAndFlashCommand.Command.FLASH, HonkAndFlashCommand.Command.HONK_AND_FLASH]:
+            if 'duration' in command_arguments:
+                command_dict['duration_s'] = command_arguments['duration']
+            else:
+                command_dict['duration_s'] = 10
+            command_dict['mode'] = command_arguments['command'].value
+            command_dict['userPosition'] = {}
+            if vehicle.position is None or vehicle.position.latitude is None or vehicle.position.longitude is None \
+                    or vehicle.position.latitude.value is None or vehicle.position.longitude.value is None \
+                    or not vehicle.position.latitude.enabled or not vehicle.position.longitude.enabled:
+                raise CommandError('Can only execute honk and flash commands if vehicle position is known')
+            command_dict['userPosition']['latitude'] = vehicle.position.latitude.value
+            command_dict['userPosition']['longitude'] = vehicle.position.longitude.value
+
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/honkandflash'
+            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            if command_response.status_code not in (requests.codes['ok'], requests.codes['no_content']):
+                LOG.error('Could not execute honk or flash command (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
+        else:
+            raise CommandError(f'Unknown command {command_arguments["command"]}')
+        return command_arguments
+
+    def __on_lock_unlock(self, lock_unlock_command: LockUnlockCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if lock_unlock_command.parent is None or lock_unlock_command.parent.parent is None \
+                or lock_unlock_command.parent.parent.parent is None or not isinstance(lock_unlock_command.parent.parent.parent, GenericVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise SetterError('Command arguments are not a dictionary')
+        vehicle: GenericVehicle = lock_unlock_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        command_dict = {}
+        if 'spin' in command_arguments:
+            command_dict['spin'] = command_arguments['spin']
+        else:
+            if self._spin is None:
+                raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
+            command_dict['spin'] = self._spin
+        if command_arguments['command'] == LockUnlockCommand.Command.LOCK:
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/access/lock'
+        elif command_arguments['command'] == LockUnlockCommand.Command.UNLOCK:
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/access/unlock'
+        else:
+            raise CommandError(f'Unknown command {command_arguments["command"]}')
+        command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+        if command_response.status_code != requests.codes['ok']:
+            LOG.error('Could not execute locking command (%s: %s)', command_response.status_code, command_response.text)
+            raise CommandError(f'Could not execute locking command ({command_response.status_code}: {command_response.text})')
         return command_arguments
 
     def __on_spin(self, spin_command: SpinCommand, command_arguments: Union[str, Dict[str, Any]]) \
