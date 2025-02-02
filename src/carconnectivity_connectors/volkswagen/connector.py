@@ -15,7 +15,7 @@ from carconnectivity.garage import Garage
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
     TemporaryAuthenticationError, ConfigurationError, SetterError, CommandError
 from carconnectivity.util import robust_time_parse, log_extra_keys, config_remove_credentials
-from carconnectivity.units import Length
+from carconnectivity.units import Length, Power, Speed
 from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
@@ -23,9 +23,10 @@ from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute
 from carconnectivity.units import Temperature
-from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand, ChargingStartStopCommand
 from carconnectivity.climatization import Climatization
 from carconnectivity.commands import Commands
+from carconnectivity.charging import Charging
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
@@ -36,6 +37,7 @@ from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimat
 from carconnectivity_connectors.volkswagen.capability import Capability
 from carconnectivity_connectors.volkswagen._version import __version__
 from carconnectivity_connectors.volkswagen.command_impl import SpinCommand
+from carconnectivity_connectors.volkswagen.charging import VolkswagenCharging, mapping_volskwagen_charging_state
 
 
 if TYPE_CHECKING:
@@ -841,6 +843,66 @@ class Connector(BaseConnector):
                     vehicle.climatization.settings.heater_source._set_value(None)  # pylint: disable=protected-access
 
                 log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings'})
+            if 'charging' in data and data['charging'] is not None:
+                if not isinstance(vehicle, VolkswagenElectricVehicle):
+                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                if vehicle.charging is not None and vehicle.charging.commands is not None \
+                        and not vehicle.charging.commands.contains_command('start-stop'):
+                    start_stop_command = ChargingStartStopCommand(parent=vehicle.charging.commands)
+                    start_stop_command._add_on_set_hook(self.__on_charging_start_stop)  # pylint: disable=protected-access
+                    start_stop_command.enabled = True
+                    vehicle.charging.commands.add_command(start_stop_command)
+                if 'chargingStatus' in data['charging'] and data['charging']['chargingStatus'] is not None:
+                    charging_status = data['climatisation']['chargingStatus']
+                    if 'value' in charging_status and charging_status['value'] is not None:
+                        climatisation_status = charging_status['value']
+                        if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(charging_status['carCapturedTimestamp'])
+                        if 'chargingState' in charging_status and charging_status['chargingState'] is not None:
+                            if charging_status['chargingState'] in VolkswagenCharging.VolkswagenChargingState:
+                                volkswagen_charging_state = VolkswagenCharging.VolkswagenChargingState(charging_status['chargingState'])
+                                charging_state: Charging.ChargingState = mapping_volskwagen_charging_state[volkswagen_charging_state]
+                            else:
+                                LOG_API.info('Unkown charging state %s not in %s', charging_status['chargingState'],
+                                             str(VolkswagenCharging.VolkswagenChargingState))
+                                charging_state = Charging.ChargingState.UNKNOWN
+
+                            # pylint: disable-next=protected-access
+                            vehicle.charging.state._set_value(value=charging_state, measured=captured_at)
+                        else:
+                            vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'chargeType' in charging_status and charging_status['chargeType'] is not None:
+                            if charging_status['chargeType'] in Charging.ChargingType:
+                                vehicle.charging.type._set_value(value=Charging.ChargingType(charging_status['chargeType']),  # pylint: disable=protected-access
+                                                                 measured=captured_at)
+                            else:
+                                LOG_API.info('Unknown charge type %s', charging_status['chargeType'])
+                                vehicle.charging.type._set_value(Charging.ChargingType.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.charging.type._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'chargePower_kW' in charging_status and charging_status['chargePower_kW'] is not None:
+                            vehicle.charging.power._set_value(value=charging_status['chargePower_kW'],  # pylint: disable=protected-access
+                                                              measured=captured_at, unit=Power.KW)
+                        else:
+                            vehicle.charging.power._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'chargeRate_kmph' in charging_status and charging_status['chargeRate_kmph'] is not None:
+                            vehicle.charging.rate._set_value(value=charging_status['chargeRate_kmph'],  # pylint: disable=protected-access
+                                                             measured=captured_at, unit=Speed.KMH)
+                        else:
+                            vehicle.charging.rate._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'remainingTimeToComplete_min' in charging_status and charging_status['remainingTimeToComplete_min'] is not None:
+                            remaining_duration: timedelta = timedelta(minutes=charging_status['remainingTimeToComplete_min'])
+                            estimated_date_reached: datetime = captured_at + remaining_duration
+                            estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
+                            vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached,  # pylint: disable=protected-access
+                                                                               measured=captured_at)
+                        else:
+                            vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'charging', data['charging'], {'chargingStatus', 'carCapturedTimestamp', 'chargingState', 'chargePower_kW',
+                                                                               'chargeRate_kmph', 'remainingTimeToComplete_min'})
+                    log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'carCapturedTimestamp'})
             log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation'})
 
     def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:
@@ -1190,4 +1252,31 @@ class Connector(BaseConnector):
             raise CommandError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
         else:
             LOG.info('Spin verify command executed successfully')
+        return command_arguments
+
+    def __on_charging_start_stop(self, start_stop_command: ChargingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if start_stop_command.parent is None or start_stop_command.parent.parent is None \
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        vehicle: VolkswagenVehicle = start_stop_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        if command_arguments['command'] == ChargingStartStopCommand.Command.START:
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/start'
+            command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+        elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/stop'
+            command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+        else:
+            raise CommandError(f'Unknown command {command_arguments["command"]}')
+
+        if command_response.status_code != requests.codes['ok']:
+            LOG.error('Could not start/stop charging (%s: %s)', command_response.status_code, command_response.text)
+            raise CommandError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
         return command_arguments
