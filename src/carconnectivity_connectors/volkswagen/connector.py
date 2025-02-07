@@ -998,6 +998,9 @@ class Connector(BaseConnector):
     def get_version(self) -> str:
         return __version__
 
+    def get_type(self) -> str:
+        return "carconnectivity-connector-volkswagen"
+
     def __on_air_conditioning_settings_change(self, attribute: GenericAttribute, value: Any) -> Any:
         """
         Callback for the climatization setting change.
