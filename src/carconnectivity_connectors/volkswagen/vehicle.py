@@ -6,8 +6,15 @@ from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionV
 
 from carconnectivity_connectors.volkswagen.capability import Capabilities
 
+SUPPORT_IMAGES = False
+try:
+    from PIL import Image
+    SUPPORT_IMAGES = True
+except ImportError:
+    pass
+
 if TYPE_CHECKING:
-    from typing import Optional
+    from typing import Optional, Dict
     from carconnectivity.garage import Garage
     from carconnectivity_connectors.base.connector import BaseConnector
 
@@ -29,9 +36,14 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
             super().__init__(origin=origin)
             self.capabilities: Capabilities = origin.capabilities
             self.capabilities.parent = self
+            if SUPPORT_IMAGES:
+                self._car_images = origin._car_images
+            
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
             self.capabilities: Capabilities = Capabilities(vehicle=self)
+            if SUPPORT_IMAGES:
+                self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access
 
 

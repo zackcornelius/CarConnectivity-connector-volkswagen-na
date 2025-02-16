@@ -39,6 +39,15 @@ from carconnectivity_connectors.volkswagen._version import __version__
 from carconnectivity_connectors.volkswagen.command_impl import SpinCommand
 from carconnectivity_connectors.volkswagen.charging import VolkswagenCharging, mapping_volskwagen_charging_state
 
+SUPPORT_IMAGES = False
+try:
+    from PIL import Image
+    import base64
+    import io
+    SUPPORT_IMAGES = True
+    from carconnectivity.attributes import ImageAttribute
+except ImportError:
+    pass
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
@@ -65,8 +74,8 @@ class Connector(BaseConnector):
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self)
-        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self)
+        self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self, tags={'connector_custom'})
+        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.commands: Commands = Commands(parent=self)
 
         # Configure logging
@@ -324,6 +333,59 @@ class Connector(BaseConnector):
                         self.fetch_vehicle_status(vehicle)
                         if vehicle.capabilities.has_capability('parkingPosition'):
                             self.fetch_parking_position(vehicle)
+
+                        if SUPPORT_IMAGES:
+                            # fetch vehcile images
+                            url: str = f'https://emea.bff.cariad.digital/media/v2/vehicle-images/{vehicle_dict['vin']}?resolution=2x'
+                            data = self._fetch_data(url, session=self.session, allow_http_error=True)
+                            if data is not None and 'data' in data:  # pylint: disable=too-many-nested-blocks
+                                for image in data['data']:
+                                    img = None
+                                    cache_date = None
+                                    imageurl: str = image['url']
+                                    if self.max_age is not None and self.session.cache is not None and imageurl in self.session.cache:
+                                        img, cache_date_string = self.session.cache[imageurl]
+                                        img = base64.b64decode(img)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                        img = Image.open(io.BytesIO(img))  # pyright: ignore[reportPossiblyUnboundVariable]
+                                        cache_date = datetime.fromisoformat(cache_date_string)
+                                    if img is None or self.max_age is None \
+                                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.max_age))):
+                                        try:
+                                            image_download_response = self.session.get(imageurl, stream=True)
+                                            if image_download_response.status_code == requests.codes['ok']:
+                                                img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                if self.session.cache is not None:
+                                                    buffered = io.BytesIO()  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                    img.save(buffered, format="PNG")
+                                                    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                    self.session.cache[imageurl] = (img_str, str(datetime.utcnow()))
+                                            elif image_download_response.status_code == requests.codes['unauthorized']:
+                                                LOG.info('Server asks for new authorization')
+                                                self.session.login()
+                                                image_download_response = self.session.get(imageurl, stream=True)
+                                                if image_download_response.status_code == requests.codes['ok']:
+                                                    img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                    if self.session.cache is not None:
+                                                        buffered = io.BytesIO()  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                        img.save(buffered, format="PNG")
+                                                        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                        self.session.cache[imageurl] = (img_str, str(datetime.utcnow()))
+                                        except requests.exceptions.ConnectionError as connection_error:
+                                            raise RetrievalError(f'Connection error: {connection_error}') from connection_error
+                                        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+                                            raise RetrievalError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+                                        except requests.exceptions.ReadTimeout as timeout_error:
+                                            raise RetrievalError(f'Timeout during read: {timeout_error}') from timeout_error
+                                        except requests.exceptions.RetryError as retry_error:
+                                            raise RetrievalError(f'Retrying failed: {retry_error}') from retry_error
+                                    if img is not None:
+                                        vehicle._car_images[image['id']] = img  # pylint: disable=protected-access
+                                        if image['id'] == 'car_34view':
+                                            if 'car_picture' in vehicle.images.images:
+                                                vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
+                                            else:
+                                                vehicle.images.images['car_picture']: ImageAttribute = ImageAttribute(name="car_picture", parent=vehicle.images,
+                                                                                                                      value=img, tags={'carconnectivity'})
                     else:
                         raise APIError('Could not fetch vehicle data, VIN missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:

@@ -39,7 +39,7 @@ class VolkswagenClimatization(Climatization):  # pylint: disable=too-many-instan
             else:
                 super().__init__(parent=parent)
             self.unit_in_car: Optional[Temperature] = None
-            self.front_zone_left_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='front_zone_left_enabled')
-            self.front_zone_right_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='front_zone_right_enabled')
-            self.rear_zone_left_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='rear_zone_left_enabled')
-            self.rear_zone_right_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='rear_zone_right_enabled')
+            self.front_zone_left_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='front_zone_left_enabled', tags={'connector_custom'})
+            self.front_zone_right_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='front_zone_right_enabled', tags={'connector_custom'})
+            self.rear_zone_left_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='rear_zone_left_enabled', tags={'connector_custom'})
+            self.rear_zone_right_enabled: BooleanAttribute = BooleanAttribute(parent=self, name='rear_zone_right_enabled', tags={'connector_custom'})
