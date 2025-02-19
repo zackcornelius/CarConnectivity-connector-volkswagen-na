@@ -321,7 +321,7 @@ class Connector(BaseConnector):
 
                         if SUPPORT_IMAGES:
                             # fetch vehcile images
-                            url: str = f'https://emea.bff.cariad.digital/media/v2/vehicle-images/{vehicle_dict['vin']}?resolution=2x'
+                            url: str = f'https://emea.bff.cariad.digital/media/v2/vehicle-images/{vehicle_dict["vin"]}?resolution=2x'
                             data = self._fetch_data(url, session=self.session, allow_http_error=True)
                             if data is not None and 'data' in data:  # pylint: disable=too-many-nested-blocks
                                 for image in data['data']:
