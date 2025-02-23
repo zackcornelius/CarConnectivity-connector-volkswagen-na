@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
 
 from carconnectivity_connectors.volkswagen.capability import Capabilities
+from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
 
 SUPPORT_IMAGES = False
 try:
@@ -38,10 +39,10 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
             self.capabilities.parent = self
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
-            
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
             self.capabilities: Capabilities = Capabilities(vehicle=self)
+            self.climatization = VolkswagenClimatization(vehicle=self, origin=self.climatization)
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access
