@@ -950,6 +950,43 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'charging', data['charging'], {'chargingStatus', 'carCapturedTimestamp', 'chargingState', 'chargePower_kW',
                                                                                'chargeRate_kmph', 'remainingTimeToComplete_min'})
                     log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'carCapturedTimestamp'})
+            if 'vehicleHealthInspection' in data and data['vehicleHealthInspection'] is not None:
+                if 'maintenanceStatus' in data['vehicleHealthInspection'] and data['vehicleHealthInspection']['maintenanceStatus'] is not None:
+                    if 'value' in data['vehicleHealthInspection']['maintenanceStatus'] \
+                            and data['vehicleHealthInspection']['maintenanceStatus']['value'] is not None:
+                        maintenance_status = data['vehicleHealthInspection']['maintenanceStatus']['value']
+                        if 'carCapturedTimestamp' not in maintenance_status or maintenance_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(maintenance_status['carCapturedTimestamp'])
+                        if 'inspectionDue_days' in maintenance_status and maintenance_status['inspectionDue_days'] is not None:
+                            inspection_due: timedelta = timedelta(days=maintenance_status['inspectionDue_days'])
+                            inspection_date: datetime = captured_at + inspection_due
+                            inspection_date = inspection_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                            vehicle.maintenance.inspection_due_at._set_value(value=inspection_date, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.maintenance.inspection_due_at._set_value(None)  # pylint: disable=protected-access
+                        if 'inspectionDue_km' in maintenance_status and maintenance_status['inspectionDue_km'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.maintenance.inspection_due_after._set_value(value=maintenance_status['inspectionDue_km'], measured=captured_at,
+                                                                                unit=Length.KM)
+                        else:
+                            vehicle.maintenance.inspection_due_after._set_value(None)  # pylint: disable=protected-access
+                        if 'oilServiceDue_days' in maintenance_status and maintenance_status['oilServiceDue_days'] is not None:
+                            oil_service_due: timedelta = timedelta(days=maintenance_status['oilServiceDue_days'])
+                            oil_service_date: datetime = captured_at + oil_service_due
+                            oil_service_date = oil_service_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                            vehicle.maintenance.oil_service_due_at._set_value(value=oil_service_date, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.maintenance.oil_service_due_at._set_value(None)  # pylint: disable=protected-access
+                        if 'oilServiceDue_km' in maintenance_status and maintenance_status['oilServiceDue_km'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.maintenance.oil_service_due_after._set_value(value=maintenance_status['oilServiceDue_km'], measured=captured_at,
+                                                                                 unit=Length.KM)
+                        else:
+                            vehicle.maintenance.oil_service_due_after._set_value(None)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'maintenanceStatus', maintenance_status, {'carCapturedTimestamp', 'inspectionDue_days', 'inspectionDue_km',
+                                                                                          'oilServiceDue_days', 'oilServiceDue_km'})
+                log_extra_keys(LOG_API, 'vehicleHealthInspection', data['vehicleHealthInspection'], {'maintenanceStatus'})
             log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation'})
 
     def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:

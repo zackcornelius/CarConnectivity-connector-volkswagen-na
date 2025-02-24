@@ -22,7 +22,7 @@ class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attribu
     """
     def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Charging] = None) -> None:
         if origin is not None:
-            super().__init__(origin=origin)
+            super().__init__(vehicle=vehicle, origin=origin)
         else:
             super().__init__(vehicle=vehicle)
 
