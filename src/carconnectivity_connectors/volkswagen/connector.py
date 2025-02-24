@@ -719,7 +719,7 @@ class Connector(BaseConnector):
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(climatisation_status['carCapturedTimestamp'])
                         if 'climatisationState' in climatisation_status and climatisation_status['climatisationState'] is not None:
-                            if climatisation_status['climatisationState'] in VolkswagenClimatization.ClimatizationState:
+                            if climatisation_status['climatisationState'] in [item.value for item in VolkswagenClimatization.ClimatizationState]:
                                 climatization_state: VolkswagenClimatization.ClimatizationState = \
                                     VolkswagenClimatization.ClimatizationState(climatisation_status['climatisationState'])
                             else:
@@ -858,7 +858,7 @@ class Connector(BaseConnector):
                         else:
                             vehicle.climatization.settings.seat_heating._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         if 'heaterSource' in climatisation_settings and climatisation_settings['heaterSource'] is not None:
-                            if climatisation_settings['heaterSource'] in Climatization.Settings.HeaterSource:
+                            if climatisation_settings['heaterSource'] in [item.value for item in Climatization.Settings.HeaterSource]:
                                 vehicle.climatization.settings.heater_source._set_value(  # pylint: disable=protected-access
                                     Climatization.Settings.HeaterSource(climatisation_settings['heaterSource']), measured=captured_at)
                             else:
@@ -908,7 +908,7 @@ class Connector(BaseConnector):
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(charging_status['carCapturedTimestamp'])
                         if 'chargingState' in charging_status and charging_status['chargingState'] is not None:
-                            if charging_status['chargingState'] in VolkswagenCharging.VolkswagenChargingState:
+                            if charging_status['chargingState'] in [item.value for item in VolkswagenCharging.VolkswagenChargingState]:
                                 volkswagen_charging_state = VolkswagenCharging.VolkswagenChargingState(charging_status['chargingState'])
                                 charging_state: Charging.ChargingState = mapping_volskwagen_charging_state[volkswagen_charging_state]
                             else:
@@ -921,7 +921,7 @@ class Connector(BaseConnector):
                         else:
                             vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         if 'chargeType' in charging_status and charging_status['chargeType'] is not None:
-                            if charging_status['chargeType'] in Charging.ChargingType:
+                            if charging_status['chargeType'] in [item.value for item in Charging.ChargingType]:
                                 vehicle.charging.type._set_value(value=Charging.ChargingType(charging_status['chargeType']),  # pylint: disable=protected-access
                                                                  measured=captured_at)
                             else:
