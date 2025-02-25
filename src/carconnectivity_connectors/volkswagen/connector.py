@@ -27,6 +27,7 @@ from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSlee
 from carconnectivity.climatization import Climatization
 from carconnectivity.commands import Commands
 from carconnectivity.charging import Charging
+from carconnectivity.charging_connector import ChargingConnector
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
@@ -950,6 +951,49 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'charging', data['charging'], {'chargingStatus', 'carCapturedTimestamp', 'chargingState', 'chargePower_kW',
                                                                                'chargeRate_kmph', 'remainingTimeToComplete_min'})
                     log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'carCapturedTimestamp'})
+                if 'plugStatus' in data and data['plugStatus'] is not None:
+                    if 'value' in data['plugStatus'] and data['plugStatus']['value'] is not None:
+                        plug_status = data['plugStatus']['value']
+                        if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(plug_status['carCapturedTimestamp'])
+                        if 'plugConnectionState' in plug_status and plug_status['plugConnectionState'] is not None:
+                            if plug_status['plugConnectionState'] in [item.value for item in ChargingConnector.ChargingConnectorConnectionState]:
+                                plug_state: ChargingConnector.ChargingConnectorConnectionState = \
+                                    ChargingConnector.ChargingConnectorConnectionState(plug_status['plugConnectionState'])
+                            else:
+                                LOG_API.info('Unknown plug connection state %s not in %s', plug_status['plugConnectionState'],
+                                             str(ChargingConnector.ChargingConnectorConnectionState))
+                                plug_state = ChargingConnector.ChargingConnectorConnectionState.UNKNOWN
+                            vehicle.charging.connector.connection_state._set_value(value=plug_state,  # pylint: disable=protected-access
+                                                                                   measured=captured_at)
+                        else:
+                            vehicle.charging.connector.connection_state._set_value(None)  # pylint: disable=protected-access
+                        if 'plugLockState' in plug_status and plug_status['plugLockState'] is not None:
+                            if plug_status['plugLockState'] in [item.value for item in ChargingConnector.ChargingConnectorLockState]:
+                                plug_lock_state: ChargingConnector.ChargingConnectorLockState = \
+                                    ChargingConnector.ChargingConnectorLockState(plug_status['plugLockState'])
+                            else:
+                                LOG_API.info('Unknown plug lock state %s not in %s', plug_status['plugLockState'],
+                                             str(ChargingConnector.ChargingConnectorLockState))
+                                plug_lock_state = ChargingConnector.ChargingConnectorLockState.UNKNOWN
+                            vehicle.charging.connector.lock_state._set_value(value=plug_lock_state,  # pylint: disable=protected-access
+                                                                             measured=captured_at)
+                        else:
+                            vehicle.charging.connector.lock_state._set_value(None)  # pylint: disable=protected-access
+                        if 'externalPower' in plug_status and plug_status['externalPower'] is not None:
+                            if plug_status['externalPower'] in [item.value for item in ChargingConnector.ExternalPower]:
+                                external_power: ChargingConnector.ExternalPower = \
+                                    ChargingConnector.ExternalPower(plug_status['externalPower'])
+                            else:
+                                LOG_API.info('Unknown external power %s not in %s', plug_status['externalPower'],
+                                             str(ChargingConnector.ExternalPower))
+                                external_power = ChargingConnector.ExternalPower.UNKNOWN
+                            vehicle.charging.connector.external_power._set_value(value=external_power,  # pylint: disable=protected-access
+                                                                                 measured=captured_at)
+                        else:
+                            vehicle.charging.connector.external_power._set_value(None)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'plugStatus', plug_status, {'carCapturedTimestamp', 'plugConnectionState', 'plugLockState', 'externalPower'})
             if 'vehicleHealthInspection' in data and data['vehicleHealthInspection'] is not None:
                 if 'maintenanceStatus' in data['vehicleHealthInspection'] and data['vehicleHealthInspection']['maintenanceStatus'] is not None:
                     if 'value' in data['vehicleHealthInspection']['maintenanceStatus'] \
