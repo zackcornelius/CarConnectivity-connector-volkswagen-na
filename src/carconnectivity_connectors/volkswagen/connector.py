@@ -77,6 +77,9 @@ class Connector(BaseConnector):
 
         self.connected: BooleanAttribute = BooleanAttribute(name="connected", parent=self, tags={'connector_custom'})
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
+        #self.interval._is_changeable = True  # pylint: disable=protected-access
+        #self.interval._add_on_set_hook((attribute: GenericAttribute, value: Any) -> Any:)  # pylint: disable=protected-access
+
         self.commands: Commands = Commands(parent=self)
 
         LOG.info("Loading volkswagen connector with config %s", config_remove_credentials(config))
@@ -396,12 +399,12 @@ class Connector(BaseConnector):
                                          'activeventilation',
                                          'automation',
                                          'auxiliaryheating',
-                                         'userCapabilities'
+                                         'userCapabilities',
                                          'charging',
                                          'chargingProfiles',
                                          'batteryChargingCare',
                                          'climatisation',
-                                         'climatisationTimers'
+                                         'climatisationTimers',
                                          'departureTimers',
                                          'fuelStatus',
                                          'vehicleLights',
@@ -1030,7 +1033,7 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'maintenanceStatus', maintenance_status, {'carCapturedTimestamp', 'inspectionDue_days', 'inspectionDue_km',
                                                                                           'oilServiceDue_days', 'oilServiceDue_km'})
                 log_extra_keys(LOG_API, 'vehicleHealthInspection', data['vehicleHealthInspection'], {'maintenanceStatus'})
-            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection'})
+            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection', 'charging'})
 
     def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:
         """
