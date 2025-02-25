@@ -904,7 +904,7 @@ class Connector(BaseConnector):
                 if 'chargingStatus' in data['charging'] and data['charging']['chargingStatus'] is not None:
                     charging_status = data['charging']['chargingStatus']
                     if 'value' in charging_status and charging_status['value'] is not None:
-                        climatisation_status = charging_status['value']
+                        charging_status = charging_status['value']
                         if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(charging_status['carCapturedTimestamp'])
