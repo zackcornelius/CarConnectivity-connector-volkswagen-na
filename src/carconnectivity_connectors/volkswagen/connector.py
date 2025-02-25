@@ -902,9 +902,8 @@ class Connector(BaseConnector):
                     start_stop_command.enabled = True
                     vehicle.charging.commands.add_command(start_stop_command)
                 if 'chargingStatus' in data['charging'] and data['charging']['chargingStatus'] is not None:
-                    charging_status = data['charging']['chargingStatus']
-                    if 'value' in charging_status and charging_status['value'] is not None:
-                        charging_status = charging_status['value']
+                    if 'value' in data['charging']['chargingStatus'] and data['charging']['chargingStatus']['value'] is not None:
+                        charging_status = data['charging']['chargingStatus']['value']
                         if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(charging_status['carCapturedTimestamp'])
@@ -948,12 +947,12 @@ class Connector(BaseConnector):
                                                                                measured=captured_at)
                         else:
                             vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'charging', data['charging'], {'chargingStatus', 'carCapturedTimestamp', 'chargingState', 'chargePower_kW',
-                                                                               'chargeRate_kmph', 'remainingTimeToComplete_min'})
-                    log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'carCapturedTimestamp'})
-                if 'plugStatus' in data and data['plugStatus'] is not None:
-                    if 'value' in data['plugStatus'] and data['plugStatus']['value'] is not None:
-                        plug_status = data['plugStatus']['value']
+                        log_extra_keys(LOG_API, 'chargingStatus', data['charging']['chargingStatus'], {'chargingStatus', 'carCapturedTimestamp',
+                                                                                                       'chargingState', 'chargePower_kW',
+                                                                                                       'chargeRate_kmph', 'remainingTimeToComplete_min'})
+                if 'plugStatus' in data['charging'] and data['charging']['plugStatus'] is not None:
+                    if 'value' in data['charging']['plugStatus'] and data['charging']['plugStatus']['value'] is not None:
+                        plug_status = data['charging']['plugStatus']['value']
                         if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(plug_status['carCapturedTimestamp'])
