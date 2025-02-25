@@ -901,7 +901,7 @@ class Connector(BaseConnector):
                     start_stop_command.enabled = True
                     vehicle.charging.commands.add_command(start_stop_command)
                 if 'chargingStatus' in data['charging'] and data['charging']['chargingStatus'] is not None:
-                    charging_status = data['climatisation']['chargingStatus']
+                    charging_status = data['charging']['chargingStatus']
                     if 'value' in charging_status and charging_status['value'] is not None:
                         climatisation_status = charging_status['value']
                         if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
@@ -987,7 +987,7 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'maintenanceStatus', maintenance_status, {'carCapturedTimestamp', 'inspectionDue_days', 'inspectionDue_km',
                                                                                           'oilServiceDue_days', 'oilServiceDue_km'})
                 log_extra_keys(LOG_API, 'vehicleHealthInspection', data['vehicleHealthInspection'], {'maintenanceStatus'})
-            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation'})
+            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection'})
 
     def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:
         """
