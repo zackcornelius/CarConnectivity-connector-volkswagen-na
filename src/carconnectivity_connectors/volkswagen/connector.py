@@ -29,6 +29,7 @@ from carconnectivity.climatization import Climatization
 from carconnectivity.commands import Commands
 from carconnectivity.charging import Charging
 from carconnectivity.charging_connector import ChargingConnector
+from carconnectivity.position import Position
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
@@ -323,6 +324,7 @@ class Connector(BaseConnector):
                         self.fetch_vehicle_status(vehicle)
                         if vehicle.capabilities.has_capability('parkingPosition'):
                             self.fetch_parking_position(vehicle)
+                        self.decide_state(vehicle)
 
                         if SUPPORT_IMAGES:
                             # fetch vehcile images
@@ -382,6 +384,22 @@ class Connector(BaseConnector):
             vehicle_to_remove = garage.get_vehicle(vin)
             if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
                 garage.remove_vehicle(vin)
+
+    def decide_state(self, vehicle: VolkswagenVehicle) -> None:
+        """
+        Decides the state of the vehicle based on the current data.
+
+        Args:
+            vehicle (VolkswagenVehicle): The Volkswagen vehicle object.
+        """
+        if vehicle is not None:
+            if vehicle.is_active is not None and vehicle.is_active.enabled and vehicle.is_active.value:
+                vehicle.state._set_value(GenericVehicle.State.IGNITION_ON)  # pylint: disable=protected-access
+            elif vehicle.position is not None and vehicle.position.enabled and vehicle.position.position_type is not None \
+                    and vehicle.position.position_type.enabled and vehicle.position.position_type.value == Position.PositionType.PARKING:
+                vehicle.state._set_value(GenericVehicle.State.PARKED)  # pylint: disable=protected-access
+            else:
+                vehicle.state._set_value(None)  # pylint: disable=protected-access
 
     def fetch_vehicle_status(self, vehicle: VolkswagenVehicle) -> None:
         """
@@ -1133,12 +1151,15 @@ class Connector(BaseConnector):
             if 'lat' in data['data'] and data['data']['lat'] is not None and 'lon' in data['data'] and data['data']['lon'] is not None:
                 vehicle.position.latitude._set_value(data['data']['lat'], measured=captured_at)  # pylint: disable=protected-access
                 vehicle.position.longitude._set_value(data['data']['lon'], measured=captured_at)  # pylint: disable=protected-access
+                vehicle.position.position_type._set_value(Position.PositionType.PARKING, measured=captured_at)  # pylint: disable=protected-access
             else:
                 vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
                 vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
         else:
             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
             vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+            vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
