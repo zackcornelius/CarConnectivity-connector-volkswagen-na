@@ -462,6 +462,7 @@ class Connector(BaseConnector):
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
                         drive_ids: set[str] = {'primary', 'secondary'}
+                        total_range: float = 0
                         for drive_id in drive_ids:
                             if f'{drive_id}Engine' in range_status and range_status[f'{drive_id}Engine'] is not None:
                                 try:
@@ -500,6 +501,7 @@ class Connector(BaseConnector):
                                         and range_status[f'{drive_id}Engine']['remainingRange_km'] is not None:
                                     # pylint: disable-next=protected-access
                                     drive.range._set_value(value=range_status[f'{drive_id}Engine']['remainingRange_km'], measured=captured_at, unit=Length.KM)
+                                    total_range += range_status[f'{drive_id}Engine']['remainingRange_km']
                                 else:
                                     drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
 
@@ -507,7 +509,16 @@ class Connector(BaseConnector):
                                                                                                                  'currentSOC_pct',
                                                                                                                  'currentFuelLevel_pct'
                                                                                                                  'remainingRange_km'})
-                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'primaryEngine', 'secondaryEngine'})
+                        if 'totalRange_km' in range_status and range_status['totalRange_km'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.drives.total_range._set_value(value=range_status['totalRange_km'], measured=captured_at, unit=Length.KM)
+                        else:
+                            if total_range > 0:
+                                # pylint: disable-next=protected-access
+                                vehicle.drives.total_range._set_value(value=total_range, measured=captured_at, unit=Length.KM)
+                            else:
+                                vehicle.drives.total_range._set_value(None)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'primaryEngine', 'secondaryEngine', 'totalRange_km'})
                     else:
                         vehicle.drives.enabled = False
                 else:
@@ -905,18 +916,18 @@ class Connector(BaseConnector):
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.front_zone_right_enabled._set_value(None, measured=captured_at)
-                        if 'rearZoneLeftEnabled' in climatisation_settings and climatisation_settings['rearZoneLeftEnabled'] is not None:
+                        if 'zoneRearLeftEnabled' in climatisation_settings and climatisation_settings['zoneRearLeftEnabled'] is not None:
                             vehicle.climatization.settings.rear_zone_left_enabled._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['rearZoneLeftEnabled'], measured=captured_at)
+                                climatisation_settings['zoneRearLeftEnabled'], measured=captured_at)
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.rear_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_left_enabled._set_value(None, measured=captured_at)
-                        if 'rearZoneRightEnabled' in climatisation_settings and climatisation_settings['rearZoneRightEnabled'] is not None:
+                        if 'zoneRearRightEnabled' in climatisation_settings and climatisation_settings['zoneRearRightEnabled'] is not None:
                             vehicle.climatization.settings.rear_zone_right_enabled._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['rearZoneRightEnabled'], measured=captured_at)
+                                climatisation_settings['zoneRearRightEnabled'], measured=captured_at)
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.rear_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
@@ -953,8 +964,8 @@ class Connector(BaseConnector):
                                                                                                   'climatisationWithoutExternalPower',
                                                                                                   'climatizationAtUnlock',
                                                                                                   'windowHeatingEnabled',
-                                                                                                  'zoneFrontLeftEnabled',
-                                                                                                  'zoneFrontRightEnabled',
+                                                                                                  'zoneRearLeftEnabled',
+                                                                                                  'zoneRearRightEnabled',
                                                                                                   'heaterSource'})
                 else:
                     vehicle.climatization.settings.target_temperature._set_value(None)  # pylint: disable=protected-access
@@ -1105,8 +1116,13 @@ class Connector(BaseConnector):
                                                                                  unit=Length.KM)
                         else:
                             vehicle.maintenance.oil_service_due_after._set_value(None)  # pylint: disable=protected-access
+                        if 'mileage_km' in maintenance_status and maintenance_status['mileage_km'] is not None \
+                                and not vehicle.odometer.enabled and vehicle.odometer is None:
+                            # pylint: disable-next=protected-access
+                            vehicle.odometer._set_value(value=maintenance_status['mileage_km'], measured=captured_at, unit=Length.KM)
+
                         log_extra_keys(LOG_API, 'maintenanceStatus', maintenance_status, {'carCapturedTimestamp', 'inspectionDue_days', 'inspectionDue_km',
-                                                                                          'oilServiceDue_days', 'oilServiceDue_km'})
+                                                                                          'oilServiceDue_days', 'oilServiceDue_km', 'mileage_km'})
                 log_extra_keys(LOG_API, 'vehicleHealthInspection', data['vehicleHealthInspection'], {'maintenanceStatus'})
             if 'readiness' in data and data['readiness'] is not None:
                 if 'readinessStatus' in data['readiness'] and data['readiness']['readinessStatus'] is not None:
