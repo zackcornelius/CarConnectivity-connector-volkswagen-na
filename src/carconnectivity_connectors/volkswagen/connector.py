@@ -21,6 +21,7 @@ from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
+from carconnectivity.battery import Battery
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute
 from carconnectivity.units import Temperature
 from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand, ChargingStartStopCommand
@@ -426,55 +427,8 @@ class Connector(BaseConnector):
 
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
         data: Dict[str, Any] | None = self._fetch_data(url, self.session)
+        data = {'access': {'accessStatus': {'value': {'overallStatus': 'safe', 'carCapturedTimestamp': '2025-02-25T21:32:12.282Z', 'doors': [{'name': 'bonnet', 'status': ['closed']}, {'name': 'trunk', 'status': ['closed', 'locked']}, {'name': 'rearRight', 'status': ['closed', 'locked']}, {'name': 'rearLeft', 'status': ['closed', 'locked']}, {'name': 'frontRight', 'status': ['closed', 'locked']}, {'name': 'frontLeft', 'status': ['closed', 'locked']}], 'windows': [{'name': 'sunRoof', 'status': ['unsupported']}, {'name': 'roofCover', 'status': ['unsupported']}, {'name': 'sunRoofRear', 'status': ['unsupported']}, {'name': 'frontLeft', 'status': ['closed']}, {'name': 'frontRight', 'status': ['closed']}, {'name': 'rearLeft', 'status': ['closed']}, {'name': 'rearRight', 'status': ['closed']}], 'doorLockStatus': 'locked'}}}, 'automation': {'climatisationTimer': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:33Z', 'timeInCar': '2025-02-25T22:31:33+01:00', 'timers': [{'id': 1, 'enabled': False, 'singleTimer': {'startDateTime': '1999-12-31T23:00:00Z', 'targetDateTime': '1999-12-31T23:00:00Z'}}, {'id': 2, 'enabled': False, 'singleTimer': {'startDateTime': '1999-12-31T23:00:00Z', 'targetDateTime': '1999-12-31T23:00:00Z'}}]}}, 'chargingProfiles': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:33.448Z', 'timeInCar': '2025-02-25T22:31:33+01:00', 'nextChargingTimer': {'id': 0, 'targetSOCreachable': 'calculating'}, 'profiles': []}}}, 'batteryChargingCare': {'chargingCareSettings': {'value': {'batteryCareMode': 'activated'}}}, 'batterySupport': {'batterySupportStatus': {'value': {'batterySupport': 'disabled'}}}, 'charging': {'chargingCareSettings': {'value': {'batteryCareMode': 'activated'}}}, 'chargingProfiles': {'chargingProfilesStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:33.448Z', 'timeInCar': '2025-02-25T22:31:33+01:00', 'nextChargingTimer': {'id': 0, 'targetSOCreachable': 'calculating'}, 'profiles': []}}}, 'climatisation': {'climatisationSettings': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:36Z', 'targetTemperature_C': 22, 'targetTemperature_F': 72, 'unitInCar': 'celsius', 'climatizationAtUnlock': False, 'windowHeatingEnabled': False, 'zoneFrontLeftEnabled': False, 'zoneFrontRightEnabled': False, 'zoneRearLeftEnabled': False, 'zoneRearRightEnabled': False}}, 'climatisationStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:36Z', 'remainingClimatisationTime_min': 0, 'climatisationState': 'off'}}, 'windowHeatingStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:36Z', 'windowHeatingStatus': [{'windowLocation': 'front', 'windowHeatingState': 'off'}, {'windowLocation': 'rear', 'windowHeatingState': 'off'}]}}}, 'fuelStatus': {'rangeStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:40:20Z', 'carType': 'electric', 'primaryEngine': {'type': 'electric', 'currentSOC_pct': 65, 'remainingRange_km': 264}, 'totalRange_km': 264}}}, 'measurements': {'rangeStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:42:53.629Z', 'electricRange': 264, 'totalRange_km': 264}}, 'odometerStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:42:50.989Z', 'odometer': 1156}}, 'temperatureBatteryStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:42:54.339Z', 'temperatureHvBatteryMin_K': '288.15', 'temperatureHvBatteryMax_K': '289.15'}}, 'fuelLevelStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:42:57.134Z', 'currentSOC_pct': 65, 'primaryEngineType': 'electric', 'carType': 'electric'}}, 'temperatureOutsideStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:34.693Z', 'temperatureOutside_K': '282.15'}}}, 'readiness': {'readinessStatus': {'value': {'connectionState': {'isOnline': True, 'isActive': False, 'batteryPowerLevel': 'comfort', 'dailyPowerBudgetAvailable': True}, 'connectionWarning': {'insufficientBatteryLevelWarning': False, 'dailyPowerBudgetWarning': False}}}}, 'vehicleLights': {'lightsStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:31:52.93Z', 'lights': [{'name': 'right', 'status': 'off'}, {'name': 'left', 'status': 'off'}]}}}, 'vehicleHealthInspection': {'maintenanceStatus': {'value': {'carCapturedTimestamp': '2025-02-25T21:42:50.989Z', 'inspectionDue_days': 710, 'mileage_km': 1156}}}, 'vehicleHealthWarnings': {'warningLights': {'value': {'carCapturedTimestamp': '2025-02-25T21:32:02.56Z', 'mileage_km': 1156}}}}
         if data is not None:
-            if 'measurements' in data and data['measurements'] is not None:
-                if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
-                    if 'value' in data['measurements']['fuelLevelStatus'] and data['measurements']['fuelLevelStatus']['value'] is not None:
-                        fuel_level_status = data['measurements']['fuelLevelStatus']['value']
-                        captured_at: datetime = robust_time_parse(fuel_level_status['carCapturedTimestamp'])
-                        # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
-                        if 'carType' in fuel_level_status and fuel_level_status['carType'] is not None:
-                            try:
-                                car_type = GenericVehicle.Type(fuel_level_status['carType'])
-                                if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                elif car_type in [GenericVehicle.Type.FUEL,
-                                                  GenericVehicle.Type.GASOLINE,
-                                                  GenericVehicle.Type.PETROL,
-                                                  GenericVehicle.Type.DIESEL,
-                                                  GenericVehicle.Type.CNG,
-                                                  GenericVehicle.Type.LPG] \
-                                        and not isinstance(vehicle, VolkswagenCombustionVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenCombustionVehicle(origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                vehicle.type._set_value(car_type)  # pylint: disable=protected-access
-                            except ValueError:
-                                LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
-                        log_extra_keys(LOG_API, 'fuelLevelStatus', fuel_level_status, {'carCapturedTimestamp', 'carType'})
-                if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
-                    if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
-                        odometer_status = data['measurements']['odometerStatus']['value']
-                        if 'carCapturedTimestamp' not in odometer_status or odometer_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(odometer_status['carCapturedTimestamp'])
-                        if 'odometer' in odometer_status and odometer_status['odometer'] is not None:
-                            # pylint: disable-next=protected-access
-                            vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
-                        else:
-                            vehicle.odometer._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
-                else:
-                    vehicle.odometer._set_value(None)  # pylint: disable=protected-access
-                log_extra_keys(LOG_API, 'measurements', data['measurements'], {'fuelLevelStatus', 'odometerStatus'})
-            else:
-                vehicle.odometer._set_value(None)  # pylint: disable=protected-access
             if 'fuelStatus' in data and data['fuelStatus'] is not None:
                 if 'rangeStatus' in data['fuelStatus'] and data['fuelStatus']['rangeStatus'] is not None:
                     if 'value' in data['fuelStatus']['rangeStatus'] and data['fuelStatus']['rangeStatus']['value'] is not None:
@@ -535,6 +489,102 @@ class Connector(BaseConnector):
                     vehicle.drives.enabled = False
             else:
                 vehicle.drives.enabled = False
+
+            if 'measurements' in data and data['measurements'] is not None:
+                if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
+                    if 'value' in data['measurements']['fuelLevelStatus'] and data['measurements']['fuelLevelStatus']['value'] is not None:
+                        fuel_level_status = data['measurements']['fuelLevelStatus']['value']
+                        captured_at: datetime = robust_time_parse(fuel_level_status['carCapturedTimestamp'])
+                        # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
+                        if 'carType' in fuel_level_status and fuel_level_status['carType'] is not None:
+                            try:
+                                car_type = GenericVehicle.Type(fuel_level_status['carType'])
+                                if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
+                                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                elif car_type in [GenericVehicle.Type.FUEL,
+                                                  GenericVehicle.Type.GASOLINE,
+                                                  GenericVehicle.Type.PETROL,
+                                                  GenericVehicle.Type.DIESEL,
+                                                  GenericVehicle.Type.CNG,
+                                                  GenericVehicle.Type.LPG] \
+                                        and not isinstance(vehicle, VolkswagenCombustionVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
+                                    vehicle = VolkswagenCombustionVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
+                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                vehicle.type._set_value(car_type)  # pylint: disable=protected-access
+                            except ValueError:
+                                LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
+                        log_extra_keys(LOG_API, 'fuelLevelStatus', fuel_level_status, {'carCapturedTimestamp', 'carType'})
+                if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
+                    if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
+                        odometer_status = data['measurements']['odometerStatus']['value']
+                        if 'carCapturedTimestamp' not in odometer_status or odometer_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(odometer_status['carCapturedTimestamp'])
+                        if 'odometer' in odometer_status and odometer_status['odometer'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
+                        else:
+                            vehicle.odometer._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
+                else:
+                    vehicle.odometer._set_value(None)  # pylint: disable=protected-access
+                if 'temperatureOutsideStatus' in data['measurements'] and data['measurements']['temperatureOutsideStatus'] is not None:
+                    if 'value' in data['measurements']['temperatureOutsideStatus'] and data['measurements']['temperatureOutsideStatus']['value'] is not None:
+                        temperature_outside_status = data['measurements']['temperatureOutsideStatus']['value']
+                        if 'carCapturedTimestamp' not in temperature_outside_status or temperature_outside_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(temperature_outside_status['carCapturedTimestamp'])
+                        if 'temperatureOutside_K' in temperature_outside_status and temperature_outside_status['temperatureOutside_K'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.outside_temperature._set_value(value=temperature_outside_status['temperatureOutside_K'], measured=captured_at,
+                                                                   unit=Temperature.K)
+                        else:
+                            vehicle.outside_temperature._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                if 'temperatureBatteryStatus' in data['measurements'] and data['measurements']['temperatureBatteryStatus'] is not None:
+                    if 'value' in data['measurements']['temperatureBatteryStatus'] and data['measurements']['temperatureBatteryStatus']['value'] is not None:
+                        temperature_battery_status = data['measurements']['temperatureBatteryStatus']['value']
+                        if isinstance(vehicle, VolkswagenElectricVehicle):
+                            electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
+                            if electric_drive is not None:
+                                battery: Battery = electric_drive.battery
+                                if 'carCapturedTimestamp' not in temperature_battery_status or temperature_battery_status['carCapturedTimestamp'] is None:
+                                    raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                                captured_at: datetime = robust_time_parse(temperature_battery_status['carCapturedTimestamp'])
+                                if 'temperatureHvBatteryMin_K' in temperature_battery_status \
+                                        and temperature_battery_status['temperatureHvBatteryMin_K'] is not None:
+                                    # pylint: disable-next=protected-access
+                                    battery.temperature_min._set_value(value=temperature_battery_status['temperatureHvBatteryMin_K'], measured=captured_at,
+                                                                       unit=Temperature.K)
+                                else:
+                                    battery.temperature_min._set_value(None)  # pylint: disable=protected-access
+                                if 'temperatureHvBatteryMax_K' in temperature_battery_status \
+                                        and temperature_battery_status['temperatureHvBatteryMax_K'] is not None:
+                                    # pylint: disable-next=protected-access
+                                    battery.temperature_max._set_value(value=temperature_battery_status['temperatureHvBatteryMax_K'], measured=captured_at,
+                                                                       unit=Temperature.K)
+                                else:
+                                    battery.temperature_max._set_value(None)  # pylint: disable=protected-access
+                                if battery.temperature_min.enabled and battery.temperature_min.value is not None \
+                                        and battery.temperature_max.enabled and battery.temperature_max.value is not None:
+                                    # pylint: disable-next=protected-access
+                                    battery.temperature._set_value(value=(battery.temperature_min.value + battery.temperature_max.value) / 2,
+                                                                   measured=captured_at, unit=Temperature.K)
+                                else:
+                                    battery.temperature._set_value(None)  # pylint: disable=protected-access
+                                log_extra_keys(LOG_API, 'temperatureBatteryStatus', temperature_battery_status, {'carCapturedTimestamp',
+                                                                                                                 'temperatureHvBatteryMin_K',
+                                                                                                                 'temperatureHvBatteryMax_K'})
+                log_extra_keys(LOG_API, 'measurements', data['measurements'], {'fuelLevelStatus', 'odometerStatus', 'temperatureOutsideStatus',
+                                                                               'temperatureBatteryStatus'})
+            else:
+                vehicle.odometer._set_value(None)  # pylint: disable=protected-access
 
             if 'access' in data and data['access'] is not None:
                 if 'accessStatus' in data['access'] and data['access']['accessStatus'] is not None:
@@ -1033,7 +1083,27 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'maintenanceStatus', maintenance_status, {'carCapturedTimestamp', 'inspectionDue_days', 'inspectionDue_km',
                                                                                           'oilServiceDue_days', 'oilServiceDue_km'})
                 log_extra_keys(LOG_API, 'vehicleHealthInspection', data['vehicleHealthInspection'], {'maintenanceStatus'})
-            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection', 'charging'})
+            if 'readiness' in data and data['readiness'] is not None:
+                if 'readinessStatus' in data['readiness'] and data['readiness']['readinessStatus'] is not None:
+                    readiness_status = data['readiness']['readinessStatus']
+                    if 'value' in readiness_status and readiness_status['value'] is not None:
+                        readiness_status = readiness_status['value']
+                        if 'connectionState' in readiness_status and readiness_status['connectionState'] is not None:
+                            if 'isOnline' in readiness_status['connectionState'] and readiness_status['connectionState']['isOnline'] is not None:
+                                if readiness_status['connectionState']['isOnline'] is True:
+                                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.REACHABLE)  # pylint: disable=protected-access
+                                else:
+                                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.OFFLINE)  # pylint: disable=protected-access
+                            else:
+                                vehicle.connection_state._set_value(None)  # pylint: disable=protected-access
+                            if 'isActive' in readiness_status['connectionState'] and readiness_status['connectionState']['isActive'] is not None:
+                                vehicle.is_active._set_value(readiness_status['connectionState']['isActive'])  # pylint: disable=protected-access
+                            else:
+                                vehicle.is_active._set_value(None)  # pylint: disable=protected-access
+                            log_extra_keys(LOG_API, 'connectionState', readiness_status['connectionState'], {'isOnline', 'isActive'})
+                        log_extra_keys(LOG_API, 'readinessStatus', readiness_status, {'connectionState'})
+            log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection',
+                                                              'charging', 'readiness'})
 
     def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:
         """

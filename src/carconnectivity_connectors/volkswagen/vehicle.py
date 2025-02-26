@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
+from carconnectivity.attributes import BooleanAttribute
 
 from carconnectivity_connectors.volkswagen.capability import Capabilities
 from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
@@ -37,12 +38,15 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
             super().__init__(origin=origin)
             self.capabilities: Capabilities = origin.capabilities
             self.capabilities.parent = self
+            self.is_active: BooleanAttribute = origin.is_active
+            self.is_active.parent = self
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
             self.capabilities: Capabilities = Capabilities(vehicle=self)
             self.climatization = VolkswagenClimatization(vehicle=self, origin=self.climatization)
+            self.is_active = BooleanAttribute(name='is_active', parent=self, tags={'connector_custom'})
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access
