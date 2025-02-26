@@ -151,6 +151,7 @@ class Connector(BaseConnector):
 
     def startup(self) -> None:
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
+        self._background_thread.name = 'carconnectivity.connectors.volkswagen-background'
         self._background_thread.start()
 
     def _background_loop(self) -> None:
