@@ -847,6 +847,7 @@ class Connector(BaseConnector):
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(climatisation_settings['carCapturedTimestamp'])
                         preferred_unit: Temperature = Temperature.C
+                        precision: float = 0.5
                         if 'unitInCar' in climatisation_settings and climatisation_settings['unitInCar'] is not None:
                             if climatisation_settings['unitInCar'] == 'farenheit':
                                 preferred_unit = Temperature.F
@@ -859,21 +860,34 @@ class Connector(BaseConnector):
                         if preferred_unit == Temperature.C and 'targetTemperature_C' in climatisation_settings:
                             target_temperature: Optional[float] = climatisation_settings['targetTemperature_C']
                             actual_unit: Optional[Temperature] = Temperature.C
+                            min_temperature: Optional[float] = 16
+                            max_temperature: Optional[float] = 29.5
                         elif preferred_unit == Temperature.F and 'targetTemperature_F' in climatisation_settings:
                             target_temperature = climatisation_settings['targetTemperature_F']
                             actual_unit = Temperature.F
+                            min_temperature: Optional[float] = 61
+                            max_temperature: Optional[float] = 85
                         elif 'targetTemperature_C' in climatisation_settings:
                             target_temperature = climatisation_settings['targetTemperature_C']
                             actual_unit = Temperature.C
+                            min_temperature: Optional[float] = 16
+                            max_temperature: Optional[float] = 29.5
                         elif 'targetTemperature_F' in climatisation_settings:
                             target_temperature = climatisation_settings['targetTemperature_F']
                             actual_unit = Temperature.F
+                            min_temperature: Optional[float] = 61
+                            max_temperature: Optional[float] = 85
                         else:
                             target_temperature = None
                             actual_unit = None
+                            min_temperature: Optional[float] = None
+                            max_temperature: Optional[float] = None
                         vehicle.climatization.settings.target_temperature._set_value(value=target_temperature,  # pylint: disable=protected-access
                                                                                      measured=captured_at,
                                                                                      unit=actual_unit)
+                        vehicle.climatization.settings.target_temperature.minimum = min_temperature
+                        vehicle.climatization.settings.target_temperature.maximum = max_temperature
+                        vehicle.climatization.settings.target_temperature.precision = precision
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
@@ -1336,11 +1350,14 @@ class Connector(BaseConnector):
             command_str = 'start'
             if vehicle.climatization.settings is None:
                 raise CommandError('Could not control climatisation, there are no climatisation settings for the vehicle available.')
+            precision: float = 0.5
             if 'target_temperature' in command_arguments:
                 # Round target temperature to nearest 0.5
-                command_dict['targetTemperature'] = round(command_arguments['target_temperature'] * 2) / 2
+                command_dict['targetTemperature'] = round(command_arguments['target_temperature'] / precision) * precision
             elif vehicle.climatization.settings.target_temperature is not None and vehicle.climatization.settings.target_temperature.enabled \
                     and vehicle.climatization.settings.target_temperature.value is not None:
+                if vehicle.climatization.settings.target_temperature.precision is not None:
+                    precision: float = vehicle.climatization.settings.target_temperature.precision
                 if isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
                         and vehicle.climatization.settings.unit_in_car is not None:
                     temperature_value: Optional[float] = vehicle.climatization.settings.target_temperature.temperature_in(
@@ -1348,7 +1365,7 @@ class Connector(BaseConnector):
                 else:
                     temperature_value = vehicle.climatization.settings.target_temperature.value
                 if temperature_value is not None:
-                    command_dict['targetTemperature'] = round(temperature_value * 2) / 2
+                    command_dict['targetTemperature'] = round(temperature_value / precision) * precision
             if 'target_temperature_unit' in command_arguments:
                 if command_arguments['target_temperature_unit'] == Temperature.C:
                     command_dict['targetTemperatureUnit'] = 'celsius'
@@ -1477,7 +1494,7 @@ class Connector(BaseConnector):
                     raise CommandError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
             except requests.exceptions.ConnectionError as connection_error:
                 raise CommandError(f'Connection error: {connection_error}.'
-                                    ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                                   ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
             except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
                 raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
             except requests.exceptions.ReadTimeout as timeout_error:
