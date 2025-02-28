@@ -6,6 +6,7 @@ import threading
 
 import json
 import os
+import traceback
 import logging
 import netrc
 from datetime import datetime, timezone, timedelta
@@ -73,6 +74,7 @@ class Connector(BaseConnector):
     """
     def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
         BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API)
+        self._healthy = False
 
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -160,6 +162,7 @@ class Connector(BaseConnector):
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.name = 'carconnectivity.connectors.volkswagen-background'
         self._background_thread.start()
+        self._healthy = True
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
@@ -188,6 +191,10 @@ class Connector(BaseConnector):
             except TemporaryAuthenticationError as err:
                 LOG.error('Temporary authentification error during update (%s). Will try again after configured interval of %ss', str(err), interval)
                 self._stop_event.wait(interval)
+            except Exception as err:
+                LOG.critical('Critical error during update: %s', traceback.format_exc())
+                self._healthy = False
+                raise err
             else:
                 self.connected._set_value(value=True)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
@@ -1597,3 +1604,6 @@ class Connector(BaseConnector):
         except requests.exceptions.RetryError as retry_error:
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
+
+    def is_healthy(self) -> bool:
+        return self._healthy and super().is_healthy()
