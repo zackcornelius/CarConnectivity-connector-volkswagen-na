@@ -166,11 +166,16 @@ class Connector(BaseConnector):
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
+        fetch: bool = True
         while not self._stop_event.is_set():
             interval = 300
             try:
                 try:
-                    self.fetch_all()
+                    if fetch:
+                        self.fetch_all()
+                        fetch = False
+                    else:
+                        self.update_vehicles()
                     self.last_update._set_value(value=datetime.now(tz=timezone.utc))  # pylint: disable=protected-access
                     if self.interval.value is not None:
                         interval: float = self.interval.value.total_seconds()
@@ -247,6 +252,27 @@ class Connector(BaseConnector):
             self.commands.add_command(spin_command)
         self.fetch_vehicles()
         self.car_connectivity.transaction_end()
+
+    def update_vehicles(self) -> None:
+        """
+        Updates the status of all vehicles in the garage managed by this connector.
+
+        This method iterates through all vehicle VINs in the garage, and for each vehicle that is
+        managed by this connector and is an instance of SkodaVehicle, it updates the vehicle's status
+        by fetching data from various APIs. If the vehicle is an instance of SkodaElectricVehicle,
+        it also fetches charging information.
+
+        Returns:
+            None
+        """
+        garage: Garage = self.car_connectivity.garage
+        for vin in set(garage.list_vehicle_vins()):
+            vehicle_to_update: Optional[GenericVehicle] = garage.get_vehicle(vin)
+            if vehicle_to_update is not None and isinstance(vehicle_to_update, VolkswagenVehicle) and vehicle_to_update.is_managed_by_connector(self):
+                self.fetch_vehicle_status(vehicle_to_update)
+                if vehicle_to_update.capabilities.has_capability('parkingPosition'):
+                    self.fetch_parking_position(vehicle_to_update)
+                self.decide_state(vehicle_to_update)
 
     def fetch_vehicles(self) -> None:
         """
@@ -336,11 +362,6 @@ class Connector(BaseConnector):
                                 lock_unlock_command.enabled = True
                                 vehicle.doors.commands.add_command(lock_unlock_command)
 
-                        self.fetch_vehicle_status(vehicle)
-                        if vehicle.capabilities.has_capability('parkingPosition'):
-                            self.fetch_parking_position(vehicle)
-                        self.decide_state(vehicle)
-
                         if SUPPORT_IMAGES:
                             # fetch vehcile images
                             url: str = f'https://emea.bff.cariad.digital/media/v2/vehicle-images/{vehicle_dict["vin"]}?resolution=2x'
@@ -399,6 +420,7 @@ class Connector(BaseConnector):
             vehicle_to_remove = garage.get_vehicle(vin)
             if vehicle_to_remove is not None and vehicle_to_remove.is_managed_by_connector(self):
                 garage.remove_vehicle(vin)
+        self.update_vehicles()
 
     def decide_state(self, vehicle: VolkswagenVehicle) -> None:
         """
