@@ -181,15 +181,19 @@ class Connector(BaseConnector):
                     raise
             except TooManyRequestsError as err:
                 LOG.error('Retrieval error during update. Too many requests from your account (%s). Will try again after 15 minutes', str(err))
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
                 self._stop_event.wait(900)
             except RetrievalError as err:
                 LOG.error('Retrieval error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
             except APICompatibilityError as err:
                 LOG.error('API compatability error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
             except TemporaryAuthenticationError as err:
                 LOG.error('Temporary authentification error during update (%s). Will try again after configured interval of %ss', str(err), interval)
+                self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
             except Exception as err:
                 LOG.critical('Critical error during update: %s', traceback.format_exc())
@@ -199,6 +203,8 @@ class Connector(BaseConnector):
             else:
                 self.connection_state._set_value(value=ConnectionState.CONNECTED)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
+        # When leaving the loop, set the connection state to disconnected
+        self.connection_state._set_value(value=ConnectionState.DISCONNECTED)  # pylint: disable=protected-access
 
     def persist(self) -> None:
         """
