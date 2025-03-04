@@ -346,6 +346,7 @@ class Connector(BaseConnector):
                                             LOG_API.warning('Capability status not a list in %s', statuses)
                                     else:
                                         capability.status.value.clear()
+                                    log_extra_keys(LOG_API, 'capability', capability_dict, {'id', 'expirationDate', 'userDisablingAllowed', 'status'})
                                 else:
                                     raise APIError('Could not fetch capabilities, capability ID missing')
                             for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:

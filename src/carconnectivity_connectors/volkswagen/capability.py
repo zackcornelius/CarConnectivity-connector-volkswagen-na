@@ -77,7 +77,7 @@ class Capabilities(GenericObject):
         """
         return self.__capabilities.get(capability_id)
 
-    def has_capability(self, capability_id: str) -> bool:
+    def has_capability(self, capability_id: str, check_status_ok=False) -> bool:
         """
         Check if the Capabilities contains a capability with the specified ID.
 
@@ -87,7 +87,14 @@ class Capabilities(GenericObject):
         Returns:
             bool: True if the capability exists, otherwise False.
         """
-        return capability_id in self.__capabilities
+        if check_status_ok:
+            if capability_id in self.__capabilities and self.__capabilities[capability_id].enabled:
+                capability: Capability = self.__capabilities[capability_id]
+                if capability.status.enabled and capability.status.value is not None and len(capability.status.value) > 0:
+                    return False
+                return True
+            return False
+        return capability_id in self.__capabilities and self.__capabilities[capability_id].enabled
 
 
 class Capability(GenericObject):
