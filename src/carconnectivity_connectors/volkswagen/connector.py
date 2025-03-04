@@ -272,7 +272,9 @@ class Connector(BaseConnector):
             vehicle_to_update: Optional[GenericVehicle] = garage.get_vehicle(vin)
             if vehicle_to_update is not None and isinstance(vehicle_to_update, VolkswagenVehicle) and vehicle_to_update.is_managed_by_connector(self):
                 self.fetch_vehicle_status(vehicle_to_update)
-                if vehicle_to_update.capabilities.has_capability('parkingPosition'):
+
+                capability_parking_position: Optional[Capability] = vehicle_to_update.capabilities.get_capability('parkingPosition')
+                if capability_parking_position is not None and capability_parking_position.enabled and len(capability_parking_position.status.value) == 0:
                     self.fetch_parking_position(vehicle_to_update)
                 self.decide_state(vehicle_to_update)
 
@@ -331,6 +333,19 @@ class Connector(BaseConnector):
                                         capability.user_disabling_allowed._set_value(capability_dict['userDisablingAllowed'])
                                     else:
                                         capability.user_disabling_allowed._set_value(None)  # pylint: disable=protected-access
+                                    if 'status' in capability_dict and capability_dict['status'] is not None:
+                                        statuses = capability_dict['status']
+                                        if isinstance(statuses, list):
+                                            for status in statuses:
+                                                if status in [item.value for item in Capability.Status]:
+                                                    capability.status.value.append(Capability.Status(status))
+                                                else:
+                                                    LOG_API.warning('Capability status unkown %s', status)
+                                                    capability.status.value.append(Capability.Status.UNKNOWN)
+                                        else:
+                                            LOG_API.warning('Capability status not a list in %s', statuses)
+                                    else:
+                                        capability.status.value.clear()
                                 else:
                                     raise APIError('Could not fetch capabilities, capability ID missing')
                             for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
@@ -338,7 +353,8 @@ class Connector(BaseConnector):
                         else:
                             vehicle.capabilities.clear_capabilities()
 
-                        if vehicle.capabilities.has_capability('vehicleWakeUpTrigger'):
+                        capability_wakeup: Optional[Capability] = vehicle.capabilities.get_capability('vehicleWakeUpTrigger')
+                        if capability_wakeup is not None and capability_wakeup.enabled and len(capability_wakeup.status.value) == 0:
                             if vehicle.commands is not None and vehicle.commands.commands is not None \
                                     and not vehicle.commands.contains_command('wake-sleep'):
                                 wake_sleep_command = WakeSleepCommand(parent=vehicle.commands)
@@ -347,7 +363,8 @@ class Connector(BaseConnector):
                                 vehicle.commands.add_command(wake_sleep_command)
 
                         # Add honkAndFlash command if necessary capabilities are available
-                        if vehicle.capabilities.has_capability('honkAndFlash'):
+                        capability_honk_and_flash: Optional[Capability] = vehicle.capabilities.get_capability('honkAndFlash')
+                        if capability_honk_and_flash is not None and capability_honk_and_flash.enabled and len(capability_honk_and_flash.status.value) == 0:
                             if vehicle.commands is not None and vehicle.commands.commands is not None \
                                     and not vehicle.commands.contains_command('honk-flash'):
                                 honk_flash_command = HonkAndFlashCommand(parent=vehicle.commands, with_duration=True)
@@ -356,7 +373,8 @@ class Connector(BaseConnector):
                                 vehicle.commands.add_command(honk_flash_command)
 
                         # Add lock and unlock command
-                        if vehicle.capabilities.has_capability('access'):
+                        capability_access: Optional[Capability] = vehicle.capabilities.get_capability('access')
+                        if capability_access is not None and capability_access.enabled and len(capability_access.status.value) == 0:
                             if vehicle.doors is not None and vehicle.doors.commands is not None and vehicle.doors.commands.commands is not None \
                                     and not vehicle.doors.commands.contains_command('lock-unlock'):
                                 lock_unlock_command = LockUnlockCommand(parent=vehicle.doors.commands)
@@ -475,8 +493,8 @@ class Connector(BaseConnector):
                                          'batterySupport']
         jobs: list[str] = []
         for capability_id in known_capabilities:
-            if vehicle.capabilities.has_capability(capability_id) \
-                    and vehicle.capabilities.get_capability(capability_id).enabled:  # pyright: ignore[reportOptionalMemberAccess]
+            capability: Optional[Capability] = vehicle.capabilities.get_capability('access')
+            if capability is not None and capability.enabled and len(capability.status.value) == 0:
                 jobs.append(capability_id)
         if len(jobs) == 0:
             LOG.warning('No capabilities enabled for vehicle %s', vin)

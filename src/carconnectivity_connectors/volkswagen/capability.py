@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from enum import IntEnum
 
 from carconnectivity.objects import GenericObject
-from carconnectivity.attributes import StringAttribute, BooleanAttribute, DateAttribute
+from carconnectivity.attributes import StringAttribute, BooleanAttribute, DateAttribute, GenericAttribute
 
 if TYPE_CHECKING:
     from typing import Dict, Optional
@@ -105,7 +105,7 @@ class Capability(GenericObject):
         self.capability_id = StringAttribute("id", self, capability_id, tags={'connector_custom'})
         self.expiration_date = DateAttribute("expiration_date", self, tags={'connector_custom'})
         self.user_disabling_allowed = BooleanAttribute("user_disabling_allowed", self, tags={'connector_custom'})
-        self.statuses = list[Capability.Status]
+        self.status = GenericAttribute("status", self, value=[], tags={'connector_custom'})
         self.enabled = True
         self.delay_notifications = False
 
