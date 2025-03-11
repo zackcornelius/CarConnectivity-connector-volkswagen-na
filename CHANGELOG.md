@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.4.2] - 2025-03-11
+### Fixed
+- Fixes bug where no data was shown anymore if the vehicle did not have access capability
+
 ## [0.4.1] - 2025-03-04
 ### Fixed
 - Fixed http error when parking position was fetched but due to error not available
@@ -46,7 +50,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.4.1...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4.1
 [0.4]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4
 [0.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.3

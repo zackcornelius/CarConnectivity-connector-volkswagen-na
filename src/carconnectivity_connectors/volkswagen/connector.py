@@ -494,7 +494,7 @@ class Connector(BaseConnector):
                                          'batterySupport']
         jobs: list[str] = []
         for capability_id in known_capabilities:
-            capability: Optional[Capability] = vehicle.capabilities.get_capability('access')
+            capability: Optional[Capability] = vehicle.capabilities.get_capability(capability_id)
             if capability is not None and capability.enabled and len(capability.status.value) == 0:
                 jobs.append(capability_id)
         if len(jobs) == 0:
