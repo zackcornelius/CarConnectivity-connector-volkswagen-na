@@ -1,4 +1,4 @@
-"""Module implements the connector to interact with the Skoda API."""
+"""Module implements the connector to interact with the Volskwagen API."""
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
@@ -23,15 +23,18 @@ from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.battery import Battery
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, CurrentAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, \
+    CurrentAttribute
 from carconnectivity.units import Temperature
-from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand, ChargingStartStopCommand
+from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand, ChargingStartStopCommand, \
+    WindowHeatingStartStopCommand
 from carconnectivity.climatization import Climatization
 from carconnectivity.commands import Commands
 from carconnectivity.charging import Charging
 from carconnectivity.charging_connector import ChargingConnector
 from carconnectivity.position import Position
 from carconnectivity.enums import ConnectionState
+from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
@@ -66,7 +69,7 @@ LOG_API: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswag
 # pylint: disable=too-many-lines
 class Connector(BaseConnector):
     """
-    Connector class for Skoda API connectivity.
+    Connector class for Volkswagen API connectivity.
     Args:
         car_connectivity (CarConnectivity): An instance of CarConnectivity.
         config (Dict): Configuration dictionary containing connection details.
@@ -260,8 +263,8 @@ class Connector(BaseConnector):
         Updates the status of all vehicles in the garage managed by this connector.
 
         This method iterates through all vehicle VINs in the garage, and for each vehicle that is
-        managed by this connector and is an instance of SkodaVehicle, it updates the vehicle's status
-        by fetching data from various APIs. If the vehicle is an instance of SkodaElectricVehicle,
+        managed by this connector and is an instance of VolkswagenVehicle, it updates the vehicle's status
+        by fetching data from various APIs. If the vehicle is an instance of VolkswagenElectricVehicle,
         it also fetches charging information.
 
         Returns:
@@ -280,8 +283,8 @@ class Connector(BaseConnector):
 
     def fetch_vehicles(self) -> None:
         """
-        Fetches the list of vehicles from the Skoda Connect API and updates the garage with new vehicles.
-        This method sends a request to the Skoda Connect API to retrieve the list of vehicles associated with the user's account.
+        Fetches the list of vehicles from the Volkswagen Connect API and updates the garage with new vehicles.
+        This method sends a request to the Volkswagen Connect API to retrieve the list of vehicles associated with the user's account.
         If new vehicles are found in the response, they are added to the garage.
 
         Returns:
@@ -1083,8 +1086,43 @@ class Connector(BaseConnector):
                     vehicle.climatization.settings.rear_zone_right_enabled._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.seat_heating._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.heater_source._set_value(None)  # pylint: disable=protected-access
+                
+                if 'windowHeatingStatus' in data['climatisation'] and data['climatisation']['windowHeatingStatus'] is not None:
+                    if 'value' in data['climatisation']['windowHeatingStatus'] and data['climatisation']['windowHeatingStatus']['value'] is not None:
+                        window_heating_status = data['climatisation']['windowHeatingStatus']['value']
+                        if 'carCapturedTimestamp' not in window_heating_status or window_heating_status['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(window_heating_status['carCapturedTimestamp'])
+                        if 'windowHeatingStatus' in window_heating_status and window_heating_status['windowHeatingStatus'] is not None:
+                            for window_heating in window_heating_status['windowHeatingStatus']:
+                                if 'windowLocation' in window_heating and window_heating['windowLocation'] is not None:
+                                    window_id = window_heating['windowLocation']
+                                    if window_id in vehicle.window_heatings.windows:
+                                        window: WindowHeatings.WindowHeating = vehicle.window_heatings.windows[window_id]
+                                    else:
+                                        window = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings)
+                                        vehicle.window_heatings.windows[window_id] = window
+                                    if 'windowHeatingState' in window_heating and window_heating['windowHeatingState'] is not None:
+                                        if window_heating['windowHeatingState'] in [item.value for item in WindowHeatings.HeatingState]:
+                                            window_heating_state: WindowHeatings.HeatingState = WindowHeatings.HeatingState(window_heating['windowHeatingState'])
+                                            window.heating_state._set_value(window_heating_state, measured=captured_at)  # pylint: disable=protected-access
+                                        else:
+                                            LOG_API.info('Unknown window heating state %s not in %s', window_heating['windowHeatingState'],
+                                                         str(WindowHeatings.HeatingState))
+                                            # pylint: disable-next=protected-access
+                                            window.heating_state._set_value(WindowHeatings.HeatingState.UNKNOWN, measured=captured_at)
+                                    else:
+                                        window.heating_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                                log_extra_keys(LOG_API, 'windowHeatingStatus', window_heating, {'windowLocation', 'windowHeatingState'})
+                        if vehicle.window_heatings is not None and vehicle.window_heatings.commands is not None \
+                                and not vehicle.window_heatings.commands.contains_command('start-stop'):
+                            start_stop_command = WindowHeatingStartStopCommand(parent=vehicle.window_heatings.commands)
+                            start_stop_command._add_on_set_hook(self.__on_window_heating_start_stop)  # pylint: disable=protected-access
+                            start_stop_command.enabled = True
+                            vehicle.window_heatings.commands.add_command(start_stop_command)
+                        log_extra_keys(LOG_API, 'windowHeatingStatus', window_heating_status, {'carCapturedTimestamp', 'windowHeatingStatus'})
 
-                log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings'})
+                log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings', 'windowHeatingStatus'})
             if 'charging' in data and data['charging'] is not None:
                 if not isinstance(vehicle, VolkswagenElectricVehicle):
                     LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
@@ -1491,7 +1529,7 @@ class Connector(BaseConnector):
                 raise SetterError(f'Could not set value ({settings_response.status_code})')
         except requests.exceptions.ConnectionError as connection_error:
             raise SetterError(f'Connection error: {connection_error}.'
-                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                              ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
         except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
             raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
         except requests.exceptions.ReadTimeout as timeout_error:
@@ -1582,7 +1620,7 @@ class Connector(BaseConnector):
                 raise CommandError(f'Could not start/stop air conditioning ({command_response.status_code}: {command_response.text})')
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
-                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                               ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
         except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
             raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
         except requests.exceptions.ReadTimeout as timeout_error:
@@ -1614,7 +1652,7 @@ class Connector(BaseConnector):
                     raise CommandError(f'Could not execute wake command ({command_response.status_code}: {command_response.text})')
             except requests.exceptions.ConnectionError as connection_error:
                 raise CommandError(f'Connection error: {connection_error}.'
-                                   ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                                   ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
             except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
                 raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
             except requests.exceptions.ReadTimeout as timeout_error:
@@ -1663,7 +1701,7 @@ class Connector(BaseConnector):
                     raise CommandError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
             except requests.exceptions.ConnectionError as connection_error:
                 raise CommandError(f'Connection error: {connection_error}.'
-                                   ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                                   ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
             except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
                 raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
             except requests.exceptions.ReadTimeout as timeout_error:
@@ -1707,7 +1745,7 @@ class Connector(BaseConnector):
                 raise CommandError(f'Could not execute locking command ({command_response.status_code}: {command_response.text})')
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
-                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                               ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
         except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
             raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
         except requests.exceptions.ReadTimeout as timeout_error:
@@ -1745,7 +1783,7 @@ class Connector(BaseConnector):
                 LOG.info('Spin verify command executed successfully')
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
-                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                               ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
         except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
             raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
         except requests.exceptions.ReadTimeout as timeout_error:
@@ -1782,7 +1820,7 @@ class Connector(BaseConnector):
                 raise CommandError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
-                               ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                               ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
         except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
             raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
         except requests.exceptions.ReadTimeout as timeout_error:
@@ -1846,7 +1884,7 @@ class Connector(BaseConnector):
                 raise SetterError(f'Could not set value ({settings_response.status_code})')
         except requests.exceptions.ConnectionError as connection_error:
             raise SetterError(f'Connection error: {connection_error}.'
-                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+                              ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
         except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
             raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
         except requests.exceptions.ReadTimeout as timeout_error:
@@ -1854,6 +1892,44 @@ class Connector(BaseConnector):
         except requests.exceptions.RetryError as retry_error:
             raise SetterError(f'Retrying failed: {retry_error}') from retry_error
         return value
+
+
+    def __on_window_heating_start_stop(self, start_stop_command: WindowHeatingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
+            -> Union[str, Dict[str, Any]]:
+        if start_stop_command.parent is None or start_stop_command.parent.parent is None \
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenVehicle):
+            raise CommandError('Object hierarchy is not as expected')
+        if not isinstance(command_arguments, dict):
+            raise CommandError('Command arguments are not a dictionary')
+        vehicle: VolkswagenVehicle = start_stop_command.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise CommandError('VIN in object hierarchy missing')
+        if 'command' not in command_arguments:
+            raise CommandError('Command argument missing')
+        try:
+            if command_arguments['command'] == WindowHeatingStartStopCommand.Command.START:
+                url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/windowheating/start'
+                command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+            elif command_arguments['command'] == WindowHeatingStartStopCommand.Command.STOP:
+                url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/windowheating/stop'
+                command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+            else:
+                raise CommandError(f'Unknown command {command_arguments["command"]}')
+
+            if command_response.status_code != requests.codes['ok']:
+                LOG.error('Could not start/stop charging (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(f'Connection error: {connection_error}.'
+                               ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
+        return command_arguments
 
     def get_name(self) -> str:
         return "Volkswagen Connector"
