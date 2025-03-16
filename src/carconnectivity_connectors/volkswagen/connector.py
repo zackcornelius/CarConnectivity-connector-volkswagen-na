@@ -1935,8 +1935,8 @@ class Connector(BaseConnector):
                 raise CommandError(f'Unknown command {command_arguments["command"]}')
 
             if command_response.status_code != requests.codes['ok']:
-                LOG.error('Could not start/stop charging (%s: %s)', command_response.status_code, command_response.text)
-                raise CommandError(f'Could not start/stop charging ({command_response.status_code}: {command_response.text})')
+                LOG.error('Could not start/stop window heating (%s: %s)', command_response.status_code, command_response.text)
+                raise CommandError(f'Could not start/stop window heating ({command_response.status_code}: {command_response.text})')
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
                                ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
