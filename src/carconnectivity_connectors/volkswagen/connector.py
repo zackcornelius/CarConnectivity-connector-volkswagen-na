@@ -23,7 +23,7 @@ from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
 from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
 from carconnectivity.battery import Battery
-from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute, EnumAttribute
+from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, CurrentAttribute
 from carconnectivity.units import Temperature
 from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand, ChargingStartStopCommand
 from carconnectivity.climatization import Climatization
@@ -511,6 +511,38 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
+                        if 'carType' in range_status and range_status['carType'] is not None:
+                            try:
+                                car_type = GenericVehicle.Type(range_status['carType'])
+                                if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
+                                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                elif car_type in [GenericVehicle.Type.FUEL,
+                                                  GenericVehicle.Type.GASOLINE,
+                                                  GenericVehicle.Type.PETROL,
+                                                  GenericVehicle.Type.DIESEL,
+                                                  GenericVehicle.Type.CNG,
+                                                  GenericVehicle.Type.LPG] \
+                                        and not isinstance(vehicle, VolkswagenCombustionVehicle):
+                                    # try to work around bug in API that shows hybrid cars as combustion cars
+                                    if car_type == GenericVehicle.Type.GASOLINE and vehicle.capabilities.has_capability('charging'):
+                                        car_type = GenericVehicle.Type.HYBRID
+                                        if not isinstance(vehicle, VolkswagenHybridVehicle):
+                                            LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
+                                            vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                            self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                    else:
+                                        LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
+                                        vehicle = VolkswagenCombustionVehicle(origin=vehicle)
+                                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
+                                    LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
+                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                vehicle.type._set_value(car_type)  # pylint: disable=protected-access
+                            except ValueError:
+                                LOG_API.warning('Unknown car type %s', range_status['carType'])
                         drive_ids: set[str] = {'primary', 'secondary'}
                         total_range: float = 0
                         for drive_id in drive_ids:
@@ -568,7 +600,8 @@ class Connector(BaseConnector):
                                 vehicle.drives.total_range._set_value(value=total_range, measured=captured_at, unit=Length.KM)
                             else:
                                 vehicle.drives.total_range._set_value(None)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'primaryEngine', 'secondaryEngine', 'totalRange_km'})
+                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'carType', 'primaryEngine', 'secondaryEngine',
+                                                                              'totalRange_km'})
                     else:
                         vehicle.drives.enabled = False
                 else:
@@ -596,9 +629,17 @@ class Connector(BaseConnector):
                                                   GenericVehicle.Type.CNG,
                                                   GenericVehicle.Type.LPG] \
                                         and not isinstance(vehicle, VolkswagenCombustionVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenCombustionVehicle(origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                    # try to work around bug in API that shows hybrid cars as combustion cars
+                                    if car_type == GenericVehicle.Type.GASOLINE and vehicle.capabilities.has_capability('charging'):
+                                        car_type = GenericVehicle.Type.HYBRID
+                                        if not isinstance(vehicle, VolkswagenHybridVehicle):
+                                            LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
+                                            vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                            self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                                    else:
+                                        LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
+                                        vehicle = VolkswagenCombustionVehicle(origin=vehicle)
+                                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
                                     LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
                                     vehicle = VolkswagenHybridVehicle(origin=vehicle)
@@ -1046,6 +1087,7 @@ class Connector(BaseConnector):
                 log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings'})
             if 'charging' in data and data['charging'] is not None:
                 if not isinstance(vehicle, VolkswagenElectricVehicle):
+                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
                     vehicle = VolkswagenElectricVehicle(origin=vehicle)
                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                 if vehicle.charging is not None and vehicle.charging.commands is not None \
@@ -1103,6 +1145,80 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'chargingStatus', 'carCapturedTimestamp',
                                                                                     'chargingState', 'chargePower_kW',
                                                                                     'chargeRate_kmph', 'remainingTimeToComplete_min'})
+                if 'chargingSettings' in data['charging'] and data['charging']['chargingSettings'] is not None:
+                    if 'value' in data['charging']['chargingSettings'] and data['charging']['chargingSettings']['value'] is not None:
+                        charging_settings = data['charging']['chargingSettings']['value']
+                        if 'carCapturedTimestamp' not in charging_settings or charging_settings['carCapturedTimestamp'] is None:
+                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                        captured_at: datetime = robust_time_parse(charging_settings['carCapturedTimestamp'])
+                        if 'maxChargeCurrentAC_A' in charging_settings and charging_settings['maxChargeCurrentAC_A'] is not None:
+                            if isinstance(vehicle.charging.settings, VolkswagenCharging.Settings):
+                                vehicle.charging.settings.max_current_in_ampere = True
+                            else:
+                                raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
+                            vehicle.charging.settings.maximum_current.minimum = 6.0
+                            vehicle.charging.settings.maximum_current.maximum = 11.0
+                            vehicle.charging.settings.maximum_current.precision = 1.0
+                            # pylint: disable-next=protected-access
+                            vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
+                            vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.charging.settings.maximum_current._set_value(charging_settings['maxChargeCurrentAC_A'],  # pylint: disable=protected-access
+                                                                                 measured=captured_at)
+                        elif 'maxChargeCurrentAC' in charging_settings and charging_settings['maxChargeCurrentAC'] is not None:
+                            if isinstance(vehicle.charging.settings, VolkswagenCharging.Settings):
+                                vehicle.charging.settings.max_current_in_ampere = False
+                            else:
+                                raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
+                            vehicle.charging.settings.maximum_current.minimum = 6.0
+                            vehicle.charging.settings.maximum_current.maximum = 11.0
+                            vehicle.charging.settings.maximum_current.precision = 1.0
+                            # pylint: disable-next=protected-access
+                            vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
+                            vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
+                            if charging_settings['maxChargeCurrentAC'] == 'maximum':
+                                vehicle.charging.settings.maximum_current._set_value(11.0,  # pylint: disable=protected-access
+                                                                                     measured=captured_at)
+                            elif charging_settings['maxChargeCurrentAC'] == 'reduced':
+                                vehicle.charging.settings.maximum_current._set_value(6.0,  # pylint: disable=protected-access
+                                                                                     measured=captured_at)
+                            else:
+                                LOG_API.info('Unknown max charge current %s', charging_settings['maxChargeCurrentAC'])
+                                vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'autoUnlockPlugWhenChargedAC' in charging_settings and charging_settings['autoUnlockPlugWhenChargedAC'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.charging.settings.auto_unlock._add_on_set_hook(self.__on_charging_settings_change)
+                            vehicle.charging.settings.auto_unlock._is_changeable = True  # pylint: disable=protected-access
+                            if charging_settings['autoUnlockPlugWhenChargedAC'] == 'on':
+                                vehicle.charging.settings.auto_unlock._set_value(True,  # pylint: disable=protected-access
+                                                                                 measured=captured_at)
+                            elif charging_settings['autoUnlockPlugWhenChargedAC'] == 'off':
+                                vehicle.charging.settings.auto_unlock._set_value(False,  # pylint: disable=protected-access
+                                                                                 measured=captured_at)
+                            else:
+                                LOG_API.info('Unknown auto unlock plug when charged %s', charging_settings['autoUnlockPlugWhenChargedAC'])
+                                vehicle.charging.settings.auto_unlock._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            vehicle.charging.settings.auto_unlock._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        if 'targetSOC_pct' in charging_settings and charging_settings['targetSOC_pct'] is not None:
+                            vehicle.charging.settings.target_level.minimum = 50.0
+                            vehicle.charging.settings.target_level.maximum = 100.0
+                            vehicle.charging.settings.target_level.precision = 10.0
+                            # pylint: disable-next=protected-access
+                            vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_settings_change)
+                            vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.charging.settings.target_level._set_value(charging_settings['targetSOC_pct'],  # pylint: disable=protected-access
+                                                                              measured=captured_at)
+                        else:
+                            vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                        log_extra_keys(LOG_API, 'chargingSettings', charging_settings, {'carCapturedTimestamp', 'maxChargeCurrentAC_A', 'maxChargeCurrentAC',
+                                                                                        'autoUnlockPlugWhenChargedAC', 'targetSOC_pct'})
+                else:
+                    vehicle.charging.settings.maximum_current._set_value(None)  # pylint: disable=protected-access
+                    vehicle.charging.settings.auto_unlock._set_value(None)  # pylint: disable=protected-access
+                    vehicle.charging.settings.target_level._set_value(None)  # pylint: disable=protected-access
+
                 if 'plugStatus' in data['charging'] and data['charging']['plugStatus'] is not None:
                     if 'value' in data['charging']['plugStatus'] and data['charging']['plugStatus']['value'] is not None:
                         plug_status = data['charging']['plugStatus']['value']
@@ -1358,6 +1474,14 @@ class Connector(BaseConnector):
             setting_dict['zoneFrontRightEnabled'] = value
         elif settings.front_zone_right_enabled.enabled and settings.front_zone_right_enabled.value is not None:
             setting_dict['zoneFrontRightEnabled'] = settings.front_zone_right_enabled.value
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'rear_zone_left_enabled':
+            setting_dict['zoneRearLeftEnabled'] = value
+        elif settings.rear_zone_left_enabled.enabled and settings.rear_zone_left_enabled.value is not None:
+            setting_dict['zoneRearLeftEnabled'] = settings.rear_zone_left_enabled.value
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'rear_zone_right_enabled':
+            setting_dict['zoneRearRightEnabled'] = value
+        elif settings.rear_zone_right_enabled.enabled and settings.rear_zone_right_enabled.value is not None:
+            setting_dict['zoneRearRightEnabled'] = settings.rear_zone_right_enabled.value
 
         url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/climatisation/settings'
         try:
@@ -1438,11 +1562,11 @@ class Connector(BaseConnector):
                 if vehicle.climatization.settings.front_zone_left_enabled is not None and vehicle.climatization.settings.front_zone_left_enabled.enabled:
                     command_dict['zoneFrontLeftEnabled'] = vehicle.climatization.settings.front_zone_left_enabled.value
                 if vehicle.climatization.settings.front_zone_right_enabled is not None and vehicle.climatization.settings.front_zone_right_enabled.enabled:
-                    command_dict['zoneFrontRightEnabled'] = vehicle.climatization.settings.front_zone_right_enabled
+                    command_dict['zoneFrontRightEnabled'] = vehicle.climatization.settings.front_zone_right_enabled.value
                 if vehicle.climatization.settings.rear_zone_left_enabled is not None and vehicle.climatization.settings.rear_zone_left_enabled.enabled:
-                    command_dict['zoneRearLeftEnabled'] = vehicle.climatization.settings.rear_zone_left_enabled
+                    command_dict['zoneRearLeftEnabled'] = vehicle.climatization.settings.rear_zone_left_enabled.value
                 if vehicle.climatization.settings.rear_zone_right_enabled is not None and vehicle.climatization.settings.rear_zone_right_enabled.enabled:
-                    command_dict['zoneRearRightEnabled'] = vehicle.climatization.settings.rear_zone_right_enabled
+                    command_dict['zoneRearRightEnabled'] = vehicle.climatization.settings.rear_zone_right_enabled.value
             if vehicle.climatization.settings.heater_source is not None and vehicle.climatization.settings.heater_source.enabled:
                 command_dict['heaterSource'] = vehicle.climatization.settings.heater_source.value
         elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
@@ -1666,6 +1790,70 @@ class Connector(BaseConnector):
         except requests.exceptions.RetryError as retry_error:
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
+
+    def __on_charging_settings_change(self, attribute: GenericAttribute, value: Any) -> Any:
+        """
+        Callback for the charging setting change.
+        """
+        if attribute.parent is None or not isinstance(attribute.parent, VolkswagenCharging.Settings) \
+                or attribute.parent.parent is None \
+                or attribute.parent.parent.parent is None or not isinstance(attribute.parent.parent.parent, VolkswagenVehicle):
+            raise SetterError('Object hierarchy is not as expected')
+        settings: VolkswagenCharging.Settings = attribute.parent
+        vehicle: VolkswagenVehicle = attribute.parent.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        if vin is None:
+            raise SetterError('VIN in object hierarchy missing')
+        setting_dict = {}
+        if isinstance(attribute, CurrentAttribute) and attribute.id == 'maximum_current':
+            if settings.max_current_in_ampere:
+                setting_dict['maxChargeCurrentAC_A'] = value
+            else:
+                if value < 6:
+                    raise SetterError('Maximum current must be greater than 6 amps')
+                if value < 11:
+                    setting_dict['maxChargeCurrentAC'] = 'reduced'
+                    value = 6.0
+                else:
+                    setting_dict['maxChargeCurrentAC'] = 'maximum'
+                    value = 11.0
+        elif settings.maximum_current.enabled and settings.maximum_current.value is not None:
+            if settings.max_current_in_ampere:
+                setting_dict['maxChargeCurrentAC_A'] = settings.maximum_current.value
+            else:
+                if settings.maximum_current.value < 6:
+                    raise SetterError('Maximum current must be greater than 6 amps')
+                if settings.maximum_current.value < 11:
+                    setting_dict['maxChargeCurrentAC'] = 'reduced'
+                    settings.maximum_current.value = 6.0
+                else:
+                    setting_dict['maxChargeCurrentAC'] = 'maximum'
+                    settings.maximum_current.value = 11.0
+        if isinstance(attribute, BooleanAttribute) and attribute.id == 'auto_unlock':
+            setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if value else 'off'
+        elif settings.auto_unlock.enabled and settings.auto_unlock.value is not None:
+            setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if settings.auto_unlock.value else 'off'
+        if isinstance(attribute, LevelAttribute) and attribute.id == 'target_level':
+            setting_dict['targetSOC_pct'] = value
+        elif settings.target_level.enabled and settings.target_level.value is not None:
+            setting_dict['targetSOC_pct'] = settings.target_level.value
+
+        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/settings'
+        try:
+            settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
+            if settings_response.status_code != requests.codes['ok']:
+                LOG.error('Could not set climatization settings (%s)', settings_response.status_code)
+                raise SetterError(f'Could not set value ({settings_response.status_code})')
+        except requests.exceptions.ConnectionError as connection_error:
+            raise SetterError(f'Connection error: {connection_error}.'
+                              ' If this happens frequently, please check if other applications communicate with the Skoda server.') from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise SetterError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise SetterError(f'Timeout during read: {timeout_error}') from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise SetterError(f'Retrying failed: {retry_error}') from retry_error
+        return value
 
     def get_name(self) -> str:
         return "Volkswagen Connector"

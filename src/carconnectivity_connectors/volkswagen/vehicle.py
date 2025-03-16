@@ -7,6 +7,7 @@ from carconnectivity.attributes import BooleanAttribute
 
 from carconnectivity_connectors.volkswagen.capability import Capabilities
 from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
+from carconnectivity_connectors.volkswagen.charging import VolkswagenCharging
 
 SUPPORT_IMAGES = False
 try:
@@ -60,8 +61,13 @@ class VolkswagenElectricVehicle(ElectricVehicle, VolkswagenVehicle):
                  origin: Optional[VolkswagenVehicle] = None) -> None:
         if origin is not None:
             super().__init__(origin=origin)
+            if isinstance(origin, ElectricVehicle):
+                self.charging = VolkswagenCharging(vehicle=self, origin=origin.charging)
+            else:
+                self.charging = VolkswagenCharging(vehicle=self, origin=self.charging)
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
+            self.charging = VolkswagenCharging(vehicle=self, origin=self.charging)
 
 
 class VolkswagenCombustionVehicle(CombustionVehicle, VolkswagenVehicle):
@@ -76,7 +82,7 @@ class VolkswagenCombustionVehicle(CombustionVehicle, VolkswagenVehicle):
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
 
 
-class VolkswagenHybridVehicle(HybridVehicle, VolkswagenVehicle):
+class VolkswagenHybridVehicle(HybridVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle):
     """
     Represents a Volkswagen hybrid vehicle.
     """
