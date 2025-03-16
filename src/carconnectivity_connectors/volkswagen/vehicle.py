@@ -36,7 +36,7 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
     def __init__(self, vin: Optional[str] = None, garage: Optional[Garage] = None, managing_connector: Optional[BaseConnector] = None,
                  origin: Optional[VolkswagenVehicle] = None) -> None:
         if origin is not None:
-            super().__init__(origin=origin)
+            super().__init__(garage=garage, origin=origin)
             self.capabilities: Capabilities = origin.capabilities
             self.capabilities.parent = self
             self.is_active: BooleanAttribute = origin.is_active
@@ -60,7 +60,7 @@ class VolkswagenElectricVehicle(ElectricVehicle, VolkswagenVehicle):
     def __init__(self, vin: Optional[str] = None, garage: Optional[Garage] = None, managing_connector: Optional[BaseConnector] = None,
                  origin: Optional[VolkswagenVehicle] = None) -> None:
         if origin is not None:
-            super().__init__(origin=origin)
+            super().__init__(garage=garage, origin=origin)
             if isinstance(origin, ElectricVehicle):
                 self.charging = VolkswagenCharging(vehicle=self, origin=origin.charging)
             else:
@@ -77,7 +77,7 @@ class VolkswagenCombustionVehicle(CombustionVehicle, VolkswagenVehicle):
     def __init__(self, vin: Optional[str] = None, garage: Optional[Garage] = None, managing_connector: Optional[BaseConnector] = None,
                  origin: Optional[VolkswagenVehicle] = None) -> None:
         if origin is not None:
-            super().__init__(origin=origin)
+            super().__init__(garage=garage, origin=origin)
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
 
@@ -89,6 +89,6 @@ class VolkswagenHybridVehicle(HybridVehicle, VolkswagenElectricVehicle, Volkswag
     def __init__(self, vin: Optional[str] = None, garage: Optional[Garage] = None, managing_connector: Optional[BaseConnector] = None,
                  origin: Optional[VolkswagenVehicle] = None) -> None:
         if origin is not None:
-            super().__init__(origin=origin)
+            super().__init__(garage=garage, origin=origin)
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)

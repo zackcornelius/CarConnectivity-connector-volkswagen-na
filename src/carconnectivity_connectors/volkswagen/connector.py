@@ -519,7 +519,7 @@ class Connector(BaseConnector):
                                 car_type = GenericVehicle.Type(range_status['carType'])
                                 if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
                                     LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                                    vehicle = VolkswagenElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type in [GenericVehicle.Type.FUEL,
                                                   GenericVehicle.Type.GASOLINE,
@@ -533,15 +533,15 @@ class Connector(BaseConnector):
                                         car_type = GenericVehicle.Type.HYBRID
                                         if not isinstance(vehicle, VolkswagenHybridVehicle):
                                             LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                            vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                            vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                             self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                     else:
                                         LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                                        vehicle = VolkswagenCombustionVehicle(origin=vehicle)
+                                        vehicle = VolkswagenCombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                         self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
                                     LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                    vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
@@ -623,7 +623,7 @@ class Connector(BaseConnector):
                                 car_type = GenericVehicle.Type(fuel_level_status['carType'])
                                 if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
                                     LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                                    vehicle = VolkswagenElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type in [GenericVehicle.Type.FUEL,
                                                   GenericVehicle.Type.GASOLINE,
@@ -637,15 +637,15 @@ class Connector(BaseConnector):
                                         car_type = GenericVehicle.Type.HYBRID
                                         if not isinstance(vehicle, VolkswagenHybridVehicle):
                                             LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                            vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                            vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                             self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                     else:
                                         LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                                        vehicle = VolkswagenCombustionVehicle(origin=vehicle)
+                                        vehicle = VolkswagenCombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                         self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
                                     LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenHybridVehicle(origin=vehicle)
+                                    vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
@@ -1143,7 +1143,7 @@ class Connector(BaseConnector):
             if 'charging' in data and data['charging'] is not None:
                 if not isinstance(vehicle, VolkswagenElectricVehicle):
                     LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                    vehicle = VolkswagenElectricVehicle(origin=vehicle)
+                    vehicle = VolkswagenElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
                 if vehicle.charging is not None and vehicle.charging.commands is not None \
                         and not vehicle.charging.commands.contains_command('start-stop'):
