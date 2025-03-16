@@ -1094,6 +1094,8 @@ class Connector(BaseConnector):
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(window_heating_status['carCapturedTimestamp'])
                         if 'windowHeatingStatus' in window_heating_status and window_heating_status['windowHeatingStatus'] is not None:
+                            heating_on: bool = False
+                            all_heating_invalid: bool = True
                             for window_heating in window_heating_status['windowHeatingStatus']:
                                 if 'windowLocation' in window_heating and window_heating['windowLocation'] is not None:
                                     window_id = window_heating['windowLocation']
@@ -1105,6 +1107,11 @@ class Connector(BaseConnector):
                                     if 'windowHeatingState' in window_heating and window_heating['windowHeatingState'] is not None:
                                         if window_heating['windowHeatingState'] in [item.value for item in WindowHeatings.HeatingState]:
                                             window_heating_state: WindowHeatings.HeatingState = WindowHeatings.HeatingState(window_heating['windowHeatingState'])
+                                            if window_heating_state == WindowHeatings.HeatingState.ON:
+                                                heating_on = True
+                                            if window_heating_state in [WindowHeatings.HeatingState.ON,
+                                                                        WindowHeatings.HeatingState.OFF]:
+                                                all_heating_invalid = False
                                             window.heating_state._set_value(window_heating_state, measured=captured_at)  # pylint: disable=protected-access
                                         else:
                                             LOG_API.info('Unknown window heating state %s not in %s', window_heating['windowHeatingState'],
@@ -1114,6 +1121,16 @@ class Connector(BaseConnector):
                                     else:
                                         window.heating_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                                 log_extra_keys(LOG_API, 'windowHeatingStatus', window_heating, {'windowLocation', 'windowHeatingState'})
+                            if all_heating_invalid:
+                                # pylint: disable-next=protected-access
+                                vehicle.window_heatings.heating_state._set_value(WindowHeatings.HeatingState.INVALID, measured=captured_at)
+                            else:
+                                if heating_on:
+                                    # pylint: disable-next=protected-access
+                                    vehicle.window_heatings.heating_state._set_value(WindowHeatings.HeatingState.ON, measured=captured_at)
+                                else:
+                                    # pylint: disable-next=protected-access
+                                    vehicle.window_heatings.heating_state._set_value(WindowHeatings.HeatingState.OFF, measured=captured_at)
                         if vehicle.window_heatings is not None and vehicle.window_heatings.commands is not None \
                                 and not vehicle.window_heatings.commands.contains_command('start-stop'):
                             start_stop_command = WindowHeatingStartStopCommand(parent=vehicle.window_heatings.commands)
