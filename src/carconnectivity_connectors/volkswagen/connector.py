@@ -1212,7 +1212,7 @@ class Connector(BaseConnector):
                             else:
                                 raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
                             vehicle.charging.settings.maximum_current.minimum = 6.0
-                            vehicle.charging.settings.maximum_current.maximum = 11.0
+                            vehicle.charging.settings.maximum_current.maximum = 16.0
                             vehicle.charging.settings.maximum_current.precision = 1.0
                             # pylint: disable-next=protected-access
                             vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
@@ -1225,13 +1225,13 @@ class Connector(BaseConnector):
                             else:
                                 raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
                             vehicle.charging.settings.maximum_current.minimum = 6.0
-                            vehicle.charging.settings.maximum_current.maximum = 11.0
+                            vehicle.charging.settings.maximum_current.maximum = 16.0
                             vehicle.charging.settings.maximum_current.precision = 1.0
                             # pylint: disable-next=protected-access
                             vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
                             vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
                             if charging_settings['maxChargeCurrentAC'] == 'maximum':
-                                vehicle.charging.settings.maximum_current._set_value(11.0,  # pylint: disable=protected-access
+                                vehicle.charging.settings.maximum_current._set_value(16.0,  # pylint: disable=protected-access
                                                                                      measured=captured_at)
                             elif charging_settings['maxChargeCurrentAC'] == 'reduced':
                                 vehicle.charging.settings.maximum_current._set_value(6.0,  # pylint: disable=protected-access
@@ -1870,24 +1870,24 @@ class Connector(BaseConnector):
             else:
                 if value < 6:
                     raise SetterError('Maximum current must be greater than 6 amps')
-                if value < 11:
+                if value < 16:
                     setting_dict['maxChargeCurrentAC'] = 'reduced'
                     value = 6.0
                 else:
                     setting_dict['maxChargeCurrentAC'] = 'maximum'
-                    value = 11.0
+                    value = 16.0
         elif settings.maximum_current.enabled and settings.maximum_current.value is not None:
             if settings.max_current_in_ampere:
                 setting_dict['maxChargeCurrentAC_A'] = round(settings.maximum_current.value / precision) * precision
             else:
                 if settings.maximum_current.value < 6:
                     raise SetterError('Maximum current must be greater than 6 amps')
-                if settings.maximum_current.value < 11:
+                if settings.maximum_current.value < 16:
                     setting_dict['maxChargeCurrentAC'] = 'reduced'
                     settings.maximum_current.value = 6.0
                 else:
                     setting_dict['maxChargeCurrentAC'] = 'maximum'
-                    settings.maximum_current.value = 11.0
+                    settings.maximum_current.value = 16.0
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'auto_unlock':
             setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if value else 'off'
         elif settings.auto_unlock.enabled and settings.auto_unlock.value is not None:
