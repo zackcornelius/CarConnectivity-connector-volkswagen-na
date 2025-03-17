@@ -1499,10 +1499,12 @@ class Connector(BaseConnector):
         if settings.target_temperature.enabled and settings.target_temperature.value is not None:
             # Round target temperature to nearest 0.5
             # Check if the attribute changed is the target_temperature attribute
+            precision: float = settings.target_temperature.precision if settings.target_temperature.precision is not None else 0.5
             if isinstance(attribute, TemperatureAttribute) and attribute.id == 'target_temperature':
-                setting_dict['targetTemperature'] = round(value * 2) / 2
+                value = round(value / precision) * precision
+                setting_dict['targetTemperature'] = value
             else:
-                setting_dict['targetTemperature'] = round(settings.target_temperature.value * 2) / 2
+                setting_dict['targetTemperature'] = round(settings.target_temperature.value / precision) * precision
             if settings.unit_in_car == Temperature.C:
                 setting_dict['targetTemperatureUnit'] = 'celsius'
             elif settings.target_temperature.unit == Temperature.F:
@@ -1860,7 +1862,9 @@ class Connector(BaseConnector):
         if vin is None:
             raise SetterError('VIN in object hierarchy missing')
         setting_dict = {}
+        precision: float = settings.maximum_current.precision if settings.maximum_current.precision is not None else 1.0
         if isinstance(attribute, CurrentAttribute) and attribute.id == 'maximum_current':
+            value = round(value / precision) * precision
             if settings.max_current_in_ampere:
                 setting_dict['maxChargeCurrentAC_A'] = value
             else:
@@ -1874,7 +1878,7 @@ class Connector(BaseConnector):
                     value = 11.0
         elif settings.maximum_current.enabled and settings.maximum_current.value is not None:
             if settings.max_current_in_ampere:
-                setting_dict['maxChargeCurrentAC_A'] = settings.maximum_current.value
+                setting_dict['maxChargeCurrentAC_A'] = round(settings.maximum_current.value / precision) * precision
             else:
                 if settings.maximum_current.value < 6:
                     raise SetterError('Maximum current must be greater than 6 amps')
@@ -1888,10 +1892,12 @@ class Connector(BaseConnector):
             setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if value else 'off'
         elif settings.auto_unlock.enabled and settings.auto_unlock.value is not None:
             setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if settings.auto_unlock.value else 'off'
+        precision: float = settings.target_level.precision if settings.target_level.precision is not None else 10.0
         if isinstance(attribute, LevelAttribute) and attribute.id == 'target_level':
+            value = round(value / precision) * precision
             setting_dict['targetSOC_pct'] = value
         elif settings.target_level.enabled and settings.target_level.value is not None:
-            setting_dict['targetSOC_pct'] = settings.target_level.value
+            setting_dict['targetSOC_pct'] = round(settings.target_level.value / precision) * precision
 
         url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/settings'
         try:
@@ -1909,7 +1915,6 @@ class Connector(BaseConnector):
         except requests.exceptions.RetryError as retry_error:
             raise SetterError(f'Retrying failed: {retry_error}') from retry_error
         return value
-
 
     def __on_window_heating_start_stop(self, start_stop_command: WindowHeatingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
