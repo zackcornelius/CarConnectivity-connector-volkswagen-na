@@ -1903,7 +1903,7 @@ class Connector(BaseConnector):
         try:
             settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
             if settings_response.status_code != requests.codes['ok']:
-                LOG.error('Could not set climatization settings (%s)', settings_response.status_code)
+                LOG.error('Could not set charging settings (%s)', settings_response.status_code)
                 raise SetterError(f'Could not set value ({settings_response.status_code})')
         except requests.exceptions.ConnectionError as connection_error:
             raise SetterError(f'Connection error: {connection_error}.'
