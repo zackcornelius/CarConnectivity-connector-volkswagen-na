@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.5] - 2025-03-20
+### Added
+- Support for window heating attributes
+- Support for window heating command
+- SUpport for changing charging settings
+
 ## [0.4.2] - 2025-03-11
 ### Fixed
 - Fixes bug where no data was shown anymore if the vehicle did not have access capability
@@ -50,7 +56,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.4.2...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.5...HEAD
+[0.5]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.5
 [0.4.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4.1
 [0.4]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4
