@@ -1212,7 +1212,7 @@ class Connector(BaseConnector):
                             else:
                                 raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
                             vehicle.charging.settings.maximum_current.minimum = 6.0
-                            vehicle.charging.settings.maximum_current.maximum = 16.0
+                            vehicle.charging.settings.maximum_current.maximum = 32.0
                             vehicle.charging.settings.maximum_current.precision = 1.0
                             # pylint: disable-next=protected-access
                             vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
@@ -1866,7 +1866,22 @@ class Connector(BaseConnector):
         if isinstance(attribute, CurrentAttribute) and attribute.id == 'maximum_current':
             value = round(value / precision) * precision
             if settings.max_current_in_ampere:
-                setting_dict['maxChargeCurrentAC_A'] = value
+                if value < 5.0:
+                    raise SetterError('Maximum current must be greater than 5 amps')
+                if value < 10.0:
+                    setting_dict['maxChargeCurrentAC_A'] = 5
+                    value = 5.0
+                elif value < 13.0:
+                    setting_dict['maxChargeCurrentAC_A'] = 10
+                    value = 10.0
+                elif value < 32.0:
+                    setting_dict['maxChargeCurrentAC_A'] = 13
+                    value = 13.0
+                elif value == 32.0:
+                    setting_dict['maxChargeCurrentAC_A'] = 32
+                    value = 32.0
+                else:
+                    raise SetterError('Maximum current must be less than 32 amps')
             else:
                 if value < 6:
                     raise SetterError('Maximum current must be greater than 6 amps')
