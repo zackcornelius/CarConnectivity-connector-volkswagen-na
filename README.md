@@ -78,3 +78,5 @@ login test@test.de
 password testpassword123
 account 1234
 ```
+### Limitations
+The connector is not working with US based vehicles.
