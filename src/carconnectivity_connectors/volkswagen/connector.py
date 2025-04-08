@@ -1403,7 +1403,8 @@ class Connector(BaseConnector):
         if vin is None:
             raise ValueError('vehicle.vin cannot be None')
         url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/parkingposition'
-        data: Dict[str, Any] | None = self._fetch_data(url, self.session, allow_empty=True)
+        data: Dict[str, Any] | None = self._fetch_data(url, self.session, allow_empty=True, allow_http_error=True, 
+                                                       allowed_errors=[requests.codes['not_found']])
         if data is not None and 'data' in data and data['data'] is not None:
             if 'carCapturedTimestamp' not in data['data'] or data['data']['carCapturedTimestamp'] is None:
                 raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
