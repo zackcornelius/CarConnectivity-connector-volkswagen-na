@@ -1464,7 +1464,7 @@ class Connector(BaseConnector):
                     elif not allow_http_error or (allowed_errors is not None and status_response.status_code not in allowed_errors):
                         raise RetrievalError(f'Could not fetch data even after re-authorization. Status Code was: {status_response.status_code}')
                 elif not allow_http_error or (allowed_errors is not None and status_response.status_code not in allowed_errors):
-                    raise RetrievalError(f'Could not fetch data. Status Code was: {status_response.status_code}')
+                    raise RetrievalError(f'Could not fetch data for {url}. Status Code was: {status_response.status_code}')
             except requests.exceptions.ConnectionError as connection_error:
                 raise RetrievalError(f'Connection error: {connection_error}') from connection_error
             except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
