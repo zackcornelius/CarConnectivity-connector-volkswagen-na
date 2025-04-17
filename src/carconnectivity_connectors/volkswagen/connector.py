@@ -582,16 +582,19 @@ class Connector(BaseConnector):
                                         and range_status[f'{drive_id}Engine']['currentSOC_pct'] is not None:
                                     # pylint: disable-next=protected-access
                                     drive.level._set_value(value=range_status[f'{drive_id}Engine']['currentSOC_pct'], measured=captured_at)
+                                    drive.level.precision = 1
                                 elif 'currentFuelLevel_pct' in range_status[f'{drive_id}Engine'] \
                                         and range_status[f'{drive_id}Engine']['currentFuelLevel_pct'] is not None:
                                     # pylint: disable-next=protected-access
                                     drive.level._set_value(value=range_status[f'{drive_id}Engine']['currentFuelLevel_pct'], measured=captured_at)
+                                    drive.level.precision = 1
                                 else:
                                     drive.level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                                 if 'remainingRange_km' in range_status[f'{drive_id}Engine'] \
                                         and range_status[f'{drive_id}Engine']['remainingRange_km'] is not None:
                                     # pylint: disable-next=protected-access
                                     drive.range._set_value(value=range_status[f'{drive_id}Engine']['remainingRange_km'], measured=captured_at, unit=Length.KM)
+                                    drive.range.precision = 1
                                     total_range += range_status[f'{drive_id}Engine']['remainingRange_km']
                                 else:
                                     drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
@@ -603,6 +606,7 @@ class Connector(BaseConnector):
                         if 'totalRange_km' in range_status and range_status['totalRange_km'] is not None:
                             # pylint: disable-next=protected-access
                             vehicle.drives.total_range._set_value(value=range_status['totalRange_km'], measured=captured_at, unit=Length.KM)
+                            vehicle.drives.total_range.precision = 1
                         else:
                             if total_range > 0:
                                 # pylint: disable-next=protected-access
@@ -666,6 +670,7 @@ class Connector(BaseConnector):
                         if 'odometer' in odometer_status and odometer_status['odometer'] is not None:
                             # pylint: disable-next=protected-access
                             vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
+                            vehicle.odometer.precision = 1
                         else:
                             vehicle.odometer._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         log_extra_keys(LOG_API, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
@@ -1342,6 +1347,7 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.maintenance.inspection_due_after._set_value(value=maintenance_status['inspectionDue_km'], measured=captured_at,
                                                                                 unit=Length.KM)
+                            vehicle.maintenance.inspection_due_after.precision = 1
                         else:
                             vehicle.maintenance.inspection_due_after._set_value(None)  # pylint: disable=protected-access
                         if 'oilServiceDue_days' in maintenance_status and maintenance_status['oilServiceDue_days'] is not None:
@@ -1355,12 +1361,14 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.maintenance.oil_service_due_after._set_value(value=maintenance_status['oilServiceDue_km'], measured=captured_at,
                                                                                  unit=Length.KM)
+                            vehicle.maintenance.oil_service_due_after.precision = 1
                         else:
                             vehicle.maintenance.oil_service_due_after._set_value(None)  # pylint: disable=protected-access
                         if 'mileage_km' in maintenance_status and maintenance_status['mileage_km'] is not None \
                                 and not vehicle.odometer.enabled and vehicle.odometer is None:
                             # pylint: disable-next=protected-access
                             vehicle.odometer._set_value(value=maintenance_status['mileage_km'], measured=captured_at, unit=Length.KM)
+                            vehicle.odometer.precision = 1
 
                         log_extra_keys(LOG_API, 'maintenanceStatus', maintenance_status, {'carCapturedTimestamp', 'inspectionDue_days', 'inspectionDue_km',
                                                                                           'oilServiceDue_days', 'oilServiceDue_km', 'mileage_km'})
@@ -1415,7 +1423,9 @@ class Connector(BaseConnector):
 
             if 'lat' in data['data'] and data['data']['lat'] is not None and 'lon' in data['data'] and data['data']['lon'] is not None:
                 vehicle.position.latitude._set_value(data['data']['lat'], measured=captured_at)  # pylint: disable=protected-access
+                vehicle.position.latitude.precision = 0.000001
                 vehicle.position.longitude._set_value(data['data']['lon'], measured=captured_at)  # pylint: disable=protected-access
+                vehicle.position.longitude.precision = 0.000001
                 vehicle.position.position_type._set_value(Position.PositionType.PARKING, measured=captured_at)  # pylint: disable=protected-access
             else:
                 vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
