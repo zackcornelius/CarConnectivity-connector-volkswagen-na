@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.7] - 2025-04-17
+### Changed
+- Updated dependencies
+- stripping of leading and trailing spaces in commands
+
+### Added
+- Precision for all attributes is now used when displaying values
+
 ## [0.6] - 2025-04-02
 ### Fixed
 - Made changes to charging settings for older electric vehicles
@@ -64,7 +72,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.6...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.7...HEAD
+[0.7]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.7
 [0.6]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.6
 [0.5]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.5
 [0.4.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.4.2
