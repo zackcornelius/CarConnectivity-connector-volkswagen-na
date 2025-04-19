@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.7.1] - 2025-04-19
+### Changed
+- Use PyJWT instead of jwt
+
 ## [0.7] - 2025-04-17
 ### Changed
 - Updated dependencies
@@ -72,7 +76,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.7...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.7.1
 [0.7]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.7
 [0.6]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.6
 [0.5]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.5
