@@ -21,7 +21,7 @@ from carconnectivity.vehicle import GenericVehicle
 from carconnectivity.doors import Doors
 from carconnectivity.windows import Windows
 from carconnectivity.lights import Lights
-from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive
+from carconnectivity.drive import GenericDrive, ElectricDrive, CombustionDrive, DieselDrive
 from carconnectivity.battery import Battery
 from carconnectivity.attributes import BooleanAttribute, DurationAttribute, GenericAttribute, TemperatureAttribute, EnumAttribute, LevelAttribute, \
     CurrentAttribute
@@ -613,8 +613,14 @@ class Connector(BaseConnector):
                                 vehicle.drives.total_range._set_value(value=total_range, measured=captured_at, unit=Length.KM)
                             else:
                                 vehicle.drives.total_range._set_value(None)  # pylint: disable=protected-access
+                        if 'adBlueRange' in range_status and range_status['adBlueRange'] is not None:
+                            for drive in vehicle.drives.drives.values():
+                                if isinstance(drive, DieselDrive):
+                                    # pylint: disable-next=protected-access
+                                    drive.adblue_range._set_value(value=range_status['adBlueRange'], measured=captured_at, unit=Length.KM)
+                                    drive.adblue_range.precision = 1
                         log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'carType', 'primaryEngine', 'secondaryEngine',
-                                                                              'totalRange_km'})
+                                                                              'totalRange_km', 'adBlueRange', 'dieselRange'})
                     else:
                         vehicle.drives.enabled = False
                 else:
