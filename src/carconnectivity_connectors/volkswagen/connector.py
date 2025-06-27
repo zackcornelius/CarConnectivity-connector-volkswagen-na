@@ -567,10 +567,11 @@ class Connector(BaseConnector):
                                 else:
                                     if engine_type == GenericDrive.Type.ELECTRIC:
                                         drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                                    elif engine_type == GenericDrive.Type.DIESEL:
+                                        drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
                                     elif engine_type in [GenericDrive.Type.FUEL,
                                                          GenericDrive.Type.GASOLINE,
                                                          GenericDrive.Type.PETROL,
-                                                         GenericDrive.Type.DIESEL,
                                                          GenericDrive.Type.CNG,
                                                          GenericDrive.Type.LPG]:
                                         drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)

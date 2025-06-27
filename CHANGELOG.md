@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.8.1] - 2025-06-27
+### Added
+- Fix support for adblue range
+
 ## [0.8] - 2025-06-26
 ### Added
 - Support for adblue range
@@ -91,7 +95,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.8...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.8.1
 [0.8]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.8
 [0.7.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.7.3
 [0.7.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.7.2
