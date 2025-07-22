@@ -1207,8 +1207,8 @@ class Connector(BaseConnector):
                                                              measured=captured_at, unit=Speed.KMH)
                         else:
                             vehicle.charging.rate._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'remainingTimeToComplete_min' in charging_status and charging_status['remainingTimeToComplete_min'] is not None:
-                            remaining_duration: timedelta = timedelta(minutes=charging_status['remainingTimeToComplete_min'])
+                        if 'remainingChargingTimeToComplete_min' in charging_status and charging_status['remainingChargingTimeToComplete_min'] is not None:
+                            remaining_duration: timedelta = timedelta(minutes=charging_status['remainingChargingTimeToComplete_min'])
                             estimated_date_reached: datetime = captured_at + remaining_duration
                             estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
                             vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached,  # pylint: disable=protected-access
@@ -1217,7 +1217,7 @@ class Connector(BaseConnector):
                             vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'chargingStatus', 'carCapturedTimestamp',
                                                                                     'chargingState', 'chargePower_kW',
-                                                                                    'chargeRate_kmph', 'remainingTimeToComplete_min'})
+                                                                                    'chargeRate_kmph', 'remainingChargingTimeToComplete_min'})
                 if 'chargingSettings' in data['charging'] and data['charging']['chargingSettings'] is not None:
                     if 'value' in data['charging']['chargingSettings'] and data['charging']['chargingSettings']['value'] is not None:
                         charging_settings = data['charging']['chargingSettings']['value']
