@@ -268,6 +268,7 @@ class OpenIDSession(requests.Session):
         Returns:
             bool: True if the session has expired, False otherwise.
         """
+        print('Checking expired token: ', self.expires_at, time.time())
         return self.expires_at is not None and self.expires_at < time.time()
 
     @property
@@ -331,6 +332,7 @@ class OpenIDSession(requests.Session):
             dict: The parsed token information.
         """
         state = state or self.state
+        print('Authorization response expecting state ', state)
         self.token = parse_authorization_code_response(authorization_response, state=state)
         return self.token
 

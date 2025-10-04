@@ -39,13 +39,14 @@ from carconnectivity.window_heating import WindowHeatings
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
 from carconnectivity_connectors.volkswagen.auth.we_connect_session import WeConnectSession
-from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle, \
-    VolkswagenHybridVehicle
+from carconnectivity_connectors.volkswagen.auth.myvw_session import MyVWSession
+from carconnectivity_connectors.volkswagen.vehicle import VolkswagenNAVehicle, VolkswagenNAElectricVehicle, VolkswagenNACombustionVehicle, \
+    VolkswagenNAHybridVehicle
 from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
 from carconnectivity_connectors.volkswagen.capability import Capability
 from carconnectivity_connectors.volkswagen._version import __version__
 from carconnectivity_connectors.volkswagen.command_impl import SpinCommand
-from carconnectivity_connectors.volkswagen.charging import VolkswagenCharging, mapping_volskwagen_charging_state
+from carconnectivity_connectors.volkswagen.charging import VolkswagenNACharging, mapping_volskwagen_charging_state
 
 SUPPORT_IMAGES = False
 try:
@@ -144,14 +145,25 @@ class Connector(BaseConnector):
             raise AuthenticationError('Username or password not provided')
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
-        session: requests.Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=self.active_config['username'],
-                                                                                              password=self.active_config['password']))
-        if not isinstance(session, WeConnectSession):
-            raise AuthenticationError('Could not create session')
-        self.session: WeConnectSession = session
-        self.session.retries = 3
-        self.session.timeout = 180
-        self.session.refresh()
+        if ('type' in config and config['type'] == 'na'):
+            session: requests.Session = self._manager.get_session(Service.MY_VW, SessionUser(username=self.active_config['username'],
+                                                                                             password=self.active_config['password']))
+            if not isinstance(session, MyVWSession):
+                raise AuthenticationError('Could not create session')
+            self.session: MyVWSession = session
+            self.base_url = "https://b-h-s.spr.us00.p.con-veh.net"
+            self.session.retries = 3
+            self.session.timeout = 180
+        else:
+            session: requests.Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=self.active_config['username'],
+                                                                                                  password=self.active_config['password']))
+            if not isinstance(session, WeConnectSession):
+                raise AuthenticationError('Could not create session')
+            self.session: WeConnectSession = session
+            self.base_url = 'https://emea.bff.cariad.digital'
+            self.session.retries = 3
+            self.session.timeout = 180
+            self.session.refresh()
 
         self._elapsed: List[timedelta] = []
 
@@ -263,8 +275,8 @@ class Connector(BaseConnector):
         Updates the status of all vehicles in the garage managed by this connector.
 
         This method iterates through all vehicle VINs in the garage, and for each vehicle that is
-        managed by this connector and is an instance of VolkswagenVehicle, it updates the vehicle's status
-        by fetching data from various APIs. If the vehicle is an instance of VolkswagenElectricVehicle,
+        managed by this connector and is an instance of VolkswagenNAVehicle, it updates the vehicle's status
+        by fetching data from various APIs. If the vehicle is an instance of VolkswagenNAElectricVehicle,
         it also fetches charging information.
 
         Returns:
@@ -273,7 +285,7 @@ class Connector(BaseConnector):
         garage: Garage = self.car_connectivity.garage
         for vin in set(garage.list_vehicle_vins()):
             vehicle_to_update: Optional[GenericVehicle] = garage.get_vehicle(vin)
-            if vehicle_to_update is not None and isinstance(vehicle_to_update, VolkswagenVehicle) and vehicle_to_update.is_managed_by_connector(self):
+            if vehicle_to_update is not None and isinstance(vehicle_to_update, VolkswagenNAVehicle) and vehicle_to_update.is_managed_by_connector(self):
                 self.fetch_vehicle_status(vehicle_to_update)
 
                 capability_parking_position: Optional[Capability] = vehicle_to_update.capabilities.get_capability('parkingPosition')
@@ -291,30 +303,35 @@ class Connector(BaseConnector):
             None
         """
         garage: Garage = self.car_connectivity.garage
-        url = 'https://emea.bff.cariad.digital/vehicle/v1/vehicles'
+        url = self.base_url + '/account/v1/garage'
         data: Dict[str, Any] | None = self._fetch_data(url, session=self.session)
 
         seen_vehicle_vins: set[str] = set()
         if data is not None:
             if 'data' in data and data['data'] is not None:
-                for vehicle_dict in data['data']:
+                for vehicle_dict in data['data']['vehicles']:
                     if 'vin' in vehicle_dict and vehicle_dict['vin'] is not None:
                         if vehicle_dict['vin'] in self.active_config['hide_vins']:
                             LOG.info('Vehicle %s filtered out due to configuration', vehicle_dict['vin'])
                             continue
                         seen_vehicle_vins.add(vehicle_dict['vin'])
-                        vehicle: Optional[VolkswagenVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
+                        vehicle: Optional[VolkswagenNAVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if vehicle is None:
-                            vehicle = VolkswagenVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self)
+                            vehicle = VolkswagenNAVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self)
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
-                        if 'nickname' in vehicle_dict and vehicle_dict['nickname'] is not None:
-                            vehicle.name._set_value(vehicle_dict['nickname'])  # pylint: disable=protected-access
+                        if 'vehicleId' not in vehicle_dict or vehicle_dict['vehicleId'] is None:
+                            raise valueError('Cannot have VW NA vehicle without vehicleId')
+
+                        vehicle.uuid._set_value(value=vehicle_dict['vehicleId'])
+
+                        if 'vehicleNickName' in vehicle_dict and vehicle_dict['vehicleNickName'] is not None:
+                            vehicle.name._set_value(vehicle_dict['vehicleNickName'])  # pylint: disable=protected-access
                         else:
                             vehicle.name._set_value(None)  # pylint: disable=protected-access
 
-                        if 'model' in vehicle_dict and vehicle_dict['model'] is not None:
-                            vehicle.model._set_value(vehicle_dict['model'])  # pylint: disable=protected-access
+                        if 'modelName' in vehicle_dict and vehicle_dict['modelName'] is not None:
+                            vehicle.model._set_value(vehicle_dict['modelName'])  # pylint: disable=protected-access
                         else:
                             vehicle.model._set_value(None)  # pylint: disable=protected-access
 
@@ -391,21 +408,29 @@ class Connector(BaseConnector):
 
                         if SUPPORT_IMAGES:
                             # fetch vehcile images
-                            url: str = f'https://emea.bff.cariad.digital/media/v2/vehicle-images/{vehicle_dict["vin"]}?resolution=2x'
-                            data = self._fetch_data(url, session=self.session, allow_http_error=True)
-                            if data is not None and 'data' in data:  # pylint: disable=too-many-nested-blocks
-                                for image in data['data']:
-                                    img = None
-                                    cache_date = None
-                                    imageurl: str = image['url']
-                                    if self.active_config['max_age'] is not None and self.session.cache is not None and imageurl in self.session.cache:
-                                        img, cache_date_string = self.session.cache[imageurl]
-                                        img = base64.b64decode(img)  # pyright: ignore[reportPossiblyUnboundVariable]
-                                        img = Image.open(io.BytesIO(img))  # pyright: ignore[reportPossiblyUnboundVariable]
-                                        cache_date = datetime.fromisoformat(cache_date_string)
-                                    if img is None or self.active_config['max_age'] is None \
-                                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age']))):
-                                        try:
+                            if 'representativeImgURLComplete' in vehicle_dict:
+                                imageurl: str = vehicle_dict['representativeImgURLComplete']
+                                img = None
+                                cache_date = None
+                                if self.active_config['max_age'] is not None and self.session.cache is not None and imageurl in self.session.cache:
+                                    img, cache_date_string = self.session.cache[imageurl]
+                                    img = base64.b64decode(img)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                    img = Image.open(io.BytesIO(img))  # pyright: ignore[reportPossiblyUnboundVariable]
+                                    cache_date = datetime.fromisoformat(cache_date_string)
+                                if img is None or self.active_config['max_age'] is None \
+                                        or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age']))):
+                                    try:
+                                        image_download_response = self.session.get(imageurl, stream=True)
+                                        if image_download_response.status_code == requests.codes['ok']:
+                                            img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
+                                            if self.session.cache is not None:
+                                                buffered = io.BytesIO()  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                img.save(buffered, format="PNG")
+                                                img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
+                                                self.session.cache[imageurl] = (img_str, str(datetime.utcnow()))
+                                        elif image_download_response.status_code == requests.codes['unauthorized']:
+                                            LOG.info('Server asks for new authorization')
+                                            self.session.login()
                                             image_download_response = self.session.get(imageurl, stream=True)
                                             if image_download_response.status_code == requests.codes['ok']:
                                                 img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
@@ -414,33 +439,21 @@ class Connector(BaseConnector):
                                                     img.save(buffered, format="PNG")
                                                     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
                                                     self.session.cache[imageurl] = (img_str, str(datetime.utcnow()))
-                                            elif image_download_response.status_code == requests.codes['unauthorized']:
-                                                LOG.info('Server asks for new authorization')
-                                                self.session.login()
-                                                image_download_response = self.session.get(imageurl, stream=True)
-                                                if image_download_response.status_code == requests.codes['ok']:
-                                                    img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
-                                                    if self.session.cache is not None:
-                                                        buffered = io.BytesIO()  # pyright: ignore[reportPossiblyUnboundVariable]
-                                                        img.save(buffered, format="PNG")
-                                                        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
-                                                        self.session.cache[imageurl] = (img_str, str(datetime.utcnow()))
-                                        except requests.exceptions.ConnectionError as connection_error:
-                                            raise RetrievalError(f'Connection error: {connection_error}') from connection_error
-                                        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
-                                            raise RetrievalError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
-                                        except requests.exceptions.ReadTimeout as timeout_error:
-                                            raise RetrievalError(f'Timeout during read: {timeout_error}') from timeout_error
-                                        except requests.exceptions.RetryError as retry_error:
-                                            raise RetrievalError(f'Retrying failed: {retry_error}') from retry_error
-                                    if img is not None:
-                                        vehicle._car_images[image['id']] = img  # pylint: disable=protected-access
-                                        if image['id'] == 'car_34view':
-                                            if 'car_picture' in vehicle.images.images:
-                                                vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
-                                            else:
-                                                vehicle.images.images['car_picture'] = ImageAttribute(name="car_picture", parent=vehicle.images,
-                                                                                                      value=img, tags={'carconnectivity'})
+                                    except requests.exceptions.ConnectionError as connection_error:
+                                        raise RetrievalError(f'Connection error: {connection_error}') from connection_error
+                                    except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+                                        raise RetrievalError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
+                                    except requests.exceptions.ReadTimeout as timeout_error:
+                                        raise RetrievalError(f'Timeout during read: {timeout_error}') from timeout_error
+                                    except requests.exceptions.RetryError as retry_error:
+                                        raise RetrievalError(f'Retrying failed: {retry_error}') from retry_error
+                                if img is not None:
+                                    vehicle._car_images['represntative'] = img  # pylint: disable=protected-access
+                                    if 'car_picture' in vehicle.images.images:
+                                        vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
+                                    else:
+                                        vehicle.images.images['car_picture'] = ImageAttribute(name="car_picture", parent=vehicle.images,
+                                                                                              value=img, tags={'carconnectivity'})
                     else:
                         raise APIError('Could not fetch vehicle data, VIN missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
@@ -449,12 +462,12 @@ class Connector(BaseConnector):
                 garage.remove_vehicle(vin)
         self.update_vehicles()
 
-    def decide_state(self, vehicle: VolkswagenVehicle) -> None:
+    def decide_state(self, vehicle: VolkswagenNAVehicle) -> None:
         """
         Decides the state of the vehicle based on the current data.
 
         Args:
-            vehicle (VolkswagenVehicle): The Volkswagen vehicle object.
+            vehicle (VolkswagenNAVehicle): The Volkswagen vehicle object.
         """
         if vehicle is not None:
             if vehicle.connection_state is not None and vehicle.connection_state.enabled \
@@ -468,7 +481,7 @@ class Connector(BaseConnector):
             else:
                 vehicle.state._set_value(GenericVehicle.State.UNKNOWN)  # pylint: disable=protected-access
 
-    def fetch_vehicle_status(self, vehicle: VolkswagenVehicle) -> None:
+    def fetch_vehicle_status(self, vehicle: VolkswagenNAVehicle) -> None:
         """
         Fetches the status of a vehicle from the Volkswagen API.
 
@@ -508,247 +521,85 @@ class Connector(BaseConnector):
                 jobs.append(capability_id)
         if len(jobs) == 0:
             LOG.warning('No capabilities enabled for vehicle %s', vin)
-            return
+            #return
 
-        url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
+        print('Fetching data for vin', vehicle.vin)
+
+        url = self.base_url + f'/rvs/v1/vehicle/{vehicle.uuid}'
+
         data: Dict[str, Any] | None = self._fetch_data(url, self.session)
+        if 'data' in data:
+            data = data['data']
         if data is not None:
-            if 'fuelStatus' in data and data['fuelStatus'] is not None:
-                if 'rangeStatus' in data['fuelStatus'] and data['fuelStatus']['rangeStatus'] is not None:
-                    if 'value' in data['fuelStatus']['rangeStatus'] and data['fuelStatus']['rangeStatus']['value'] is not None:
-                        range_status = data['fuelStatus']['rangeStatus']['value']
-                        if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
-                        if 'carType' in range_status and range_status['carType'] is not None:
-                            try:
-                                car_type = GenericVehicle.Type(range_status['carType'])
-                                if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                elif car_type in [GenericVehicle.Type.FUEL,
-                                                  GenericVehicle.Type.GASOLINE,
-                                                  GenericVehicle.Type.PETROL,
-                                                  GenericVehicle.Type.DIESEL,
-                                                  GenericVehicle.Type.CNG,
-                                                  GenericVehicle.Type.LPG] \
-                                        and not isinstance(vehicle, VolkswagenCombustionVehicle):
-                                    # try to work around bug in API that shows hybrid cars as combustion cars
-                                    if car_type == GenericVehicle.Type.GASOLINE and vehicle.capabilities.has_capability('charging'):
-                                        car_type = GenericVehicle.Type.HYBRID
-                                        if not isinstance(vehicle, VolkswagenHybridVehicle):
-                                            LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                            vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                            self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                    else:
-                                        LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                                        vehicle = VolkswagenCombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                vehicle.type._set_value(car_type)  # pylint: disable=protected-access
-                            except ValueError:
-                                LOG_API.warning('Unknown car type %s', range_status['carType'])
-                        drive_ids: set[str] = {'primary', 'secondary'}
-                        total_range: float = 0
-                        for drive_id in drive_ids:
-                            if f'{drive_id}Engine' in range_status and range_status[f'{drive_id}Engine'] is not None:
-                                try:
-                                    engine_type: GenericDrive.Type = GenericDrive.Type(range_status[f'{drive_id}Engine']['type'])
-                                except ValueError:
-                                    LOG_API.warning('Unknown engine_type type %s', range_status[f'{drive_id}Engine']['type'])
-                                    engine_type: GenericDrive.Type = GenericDrive.Type.UNKNOWN
-
-                                if drive_id in vehicle.drives.drives:
-                                    drive: GenericDrive = vehicle.drives.drives[drive_id]
-                                else:
-                                    if engine_type == GenericDrive.Type.ELECTRIC:
-                                        drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    elif engine_type == GenericDrive.Type.DIESEL:
-                                        drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    elif engine_type in [GenericDrive.Type.FUEL,
-                                                         GenericDrive.Type.GASOLINE,
-                                                         GenericDrive.Type.PETROL,
-                                                         GenericDrive.Type.CNG,
-                                                         GenericDrive.Type.LPG]:
-                                        drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    else:
-                                        drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    drive.type._set_value(engine_type)  # pylint: disable=protected-access
-                                    vehicle.drives.add_drive(drive)
-                                if 'currentSOC_pct' in range_status[f'{drive_id}Engine'] \
-                                        and range_status[f'{drive_id}Engine']['currentSOC_pct'] is not None:
-                                    # pylint: disable-next=protected-access
-                                    drive.level._set_value(value=range_status[f'{drive_id}Engine']['currentSOC_pct'], measured=captured_at)
-                                    drive.level.precision = 1
-                                elif 'currentFuelLevel_pct' in range_status[f'{drive_id}Engine'] \
-                                        and range_status[f'{drive_id}Engine']['currentFuelLevel_pct'] is not None:
-                                    # pylint: disable-next=protected-access
-                                    drive.level._set_value(value=range_status[f'{drive_id}Engine']['currentFuelLevel_pct'], measured=captured_at)
-                                    drive.level.precision = 1
-                                else:
-                                    drive.level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                                if 'remainingRange_km' in range_status[f'{drive_id}Engine'] \
-                                        and range_status[f'{drive_id}Engine']['remainingRange_km'] is not None:
-                                    # pylint: disable-next=protected-access
-                                    drive.range._set_value(value=range_status[f'{drive_id}Engine']['remainingRange_km'], measured=captured_at, unit=Length.KM)
-                                    drive.range.precision = 1
-                                    total_range += range_status[f'{drive_id}Engine']['remainingRange_km']
-                                else:
-                                    drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
-
-                                log_extra_keys(LOG_API, f'{drive_id}Engine', range_status[f'{drive_id}Engine'], {'type',
-                                                                                                                 'currentSOC_pct',
-                                                                                                                 'currentFuelLevel_pct'
-                                                                                                                 'remainingRange_km'})
-                        if 'totalRange_km' in range_status and range_status['totalRange_km'] is not None:
-                            # pylint: disable-next=protected-access
-                            vehicle.drives.total_range._set_value(value=range_status['totalRange_km'], measured=captured_at, unit=Length.KM)
-                            vehicle.drives.total_range.precision = 1
-                        else:
-                            if total_range > 0:
-                                # pylint: disable-next=protected-access
-                                vehicle.drives.total_range._set_value(value=total_range, measured=captured_at, unit=Length.KM)
-                            else:
-                                vehicle.drives.total_range._set_value(None)  # pylint: disable=protected-access
-                        if 'adBlueRange' in range_status and range_status['adBlueRange'] is not None:
-                            for drive in vehicle.drives.drives.values():
-                                if isinstance(drive, DieselDrive):
-                                    # pylint: disable-next=protected-access
-                                    drive.adblue_range._set_value(value=range_status['adBlueRange'], measured=captured_at, unit=Length.KM)
-                                    drive.adblue_range.precision = 1
-                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'carType', 'primaryEngine', 'secondaryEngine',
-                                                                              'totalRange_km', 'adBlueRange', 'dieselRange'})
-                    else:
-                        vehicle.drives.enabled = False
-                else:
-                    vehicle.drives.enabled = False
+            print(f'Vehicle {vehicle.vin} status', data)
+            if 'clampStateTimestamp' in data and data['clampStateTimestamp'] is not None:
+                captured_at: datetime = datetime.utcfromtimestamp(data['clampStateTimestamp'] / 1000)
+            elif 'instrumentCluserTime' in data and data['instrumentCluserTime'] is not None:
+                captured_at: datetime = robust_time_parse(data['instrumentCluserTime'])
             else:
-                vehicle.drives.enabled = False
+                raise APIError('Could not fetch vehicle status, clampStateTimestamp and instrumentCluserTime missing')
+
+            if 'platform' in data and data['platform'] in ['MEB'] and not isinstance(vehicle, VolkswagenNAElectricVehicle):
+                LOG.debug('Promoting %s to VolkswagenNAElectricVehicle object for %s', vehicle.__class__.__name__, vin)
+                vehicle = VolkswagenNAElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
+                self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+            elif not isinstance(vehicle, VolkswagenNACombustionVehicle):
+                # No hybrids in the US right now
+                LOG.debug('Promoting %s to VolkswagenNACombustionVehicle object for %s', vehicle.__class__.__name__, vin)
+                vehicle = VolkswagenNACombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
+                self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+            if 'powerStatus' in data and data['powerStatus'] is not None:
+                power_status = data['powerStatus']
+
+                drive_id = 'primary'
+                if isinstance(vehicle, VolkswagenNAElectricVehicle):
+                    engine_type: GenericDrive.Type = GenericDrive.Type.ELECTRIC
+                else:
+                    engine_type: GenericDrive.Type = GenericDrive.Type.GASOLINE
+
+                if drive_id in vehicle.drives.drives:
+                    drive: GenericDrive = vehicle.drives.drives[drive_id]
+                else:
+                    if engine_type == GenericDrive.Type.ELECTRIC:
+                        drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                    elif engine_type == GenericDrive.Type.DIESEL:
+                        drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
+                    elif engine_type in [GenericDrive.Type.FUEL,
+                                         GenericDrive.Type.GASOLINE,
+                                         GenericDrive.Type.PETROL,
+                                         GenericDrive.Type.CNG,
+                                         GenericDrive.Type.LPG]:
+                        drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
+                    else:
+                        drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
+                    drive.type._set_value(engine_type)  # pylint: disable=protected-access
+                    vehicle.drives.add_drive(drive)
+                if 'cruiseRange' in power_status and power_status['cruiseRange'] is not None:
+                    drive.range._set_value(value=float(power_status['cruiseRange']), measured=captured_at, unit=Length.KM if power_status['cruiseRangeUnits'] == 'KM' else Length.MI)
+                    drive.range.precision = 1
+                    vehicle.drives.total_range._set_value(value=float(power_status['cruiseRange']), measured=captured_at, unit=Length.KM if power_status['cruiseRangeUnits'] == 'KM' else Length.MI)
+                    vehicle.drives.total_range.precision = 1
+                else:
+                    drive.range._set_value(None, measured=captured_at, unit=Length.KM)  # pylint: disable=protected-access
+                    vehicle.drives.total_range._set_value(None)  # pylint: disable=protected-access
+
+                if 'fuelPercentRemaining' in power_status and power_status['fuelPercentRemaining'] is not None and engine_type is not GenericDrive.Type.ELECTRIC:
+                    # pylint: disable-next=protected-access
+                    drive.level._set_value(value=float(power_status['fuelPercentRemaining']), measured=captured_at)
+                    drive.level.precision = 1
+
+                log_extra_keys(LOG_API, 'powerStatus', power_status, {'cruiseRange', 'fuelPercentRemaining', 'cruiseRangeUnits', 'cruiseRangeFirst'})
+
+
+            if 'currentMileage' in data and data['currentMileage'] is not None:
+                # pylint: disable-next=protected-access
+                vehicle.odometer._set_value(value=data['currentMileage'], measured=captured_at, unit=Length.KM)
+                vehicle.odometer.precision = 1
+            else:
+                # pylint: disable-next=protected-access
+                vehicle.odometer._set_value(None, measured=captured_at)
 
             if 'measurements' in data and data['measurements'] is not None:
-                if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
-                    if 'value' in data['measurements']['fuelLevelStatus'] and data['measurements']['fuelLevelStatus']['value'] is not None:
-                        fuel_level_status = data['measurements']['fuelLevelStatus']['value']
-                        captured_at: datetime = robust_time_parse(fuel_level_status['carCapturedTimestamp'])
-                        # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
-                        if 'carType' in fuel_level_status and fuel_level_status['carType'] is not None:
-                            try:
-                                car_type = GenericVehicle.Type(fuel_level_status['carType'])
-                                if car_type == GenericVehicle.Type.ELECTRIC and not isinstance(vehicle, VolkswagenElectricVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                elif car_type in [GenericVehicle.Type.FUEL,
-                                                  GenericVehicle.Type.GASOLINE,
-                                                  GenericVehicle.Type.PETROL,
-                                                  GenericVehicle.Type.DIESEL,
-                                                  GenericVehicle.Type.CNG,
-                                                  GenericVehicle.Type.LPG] \
-                                        and not isinstance(vehicle, VolkswagenCombustionVehicle):
-                                    # try to work around bug in API that shows hybrid cars as combustion cars
-                                    if car_type == GenericVehicle.Type.GASOLINE and vehicle.capabilities.has_capability('charging'):
-                                        car_type = GenericVehicle.Type.HYBRID
-                                        if not isinstance(vehicle, VolkswagenHybridVehicle):
-                                            LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                            vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                            self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                    else:
-                                        LOG.debug('Promoting %s to VolkswagenCombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                                        vehicle = VolkswagenCombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                        self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                elif car_type == GenericVehicle.Type.HYBRID and not isinstance(vehicle, VolkswagenHybridVehicle):
-                                    LOG.debug('Promoting %s to VolkswagenHybridVehicle object for %s', vehicle.__class__.__name__, vin)
-                                    vehicle = VolkswagenHybridVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
-                                vehicle.type._set_value(car_type)  # pylint: disable=protected-access
-                            except ValueError:
-                                LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
-                        drive_ids: set[str] = {'primary', 'secondary'}
-                        for drive_id in drive_ids:
-                            if f'{drive_id}EngineType' in fuel_level_status and fuel_level_status[f'{drive_id}EngineType'] is not None:
-                                try:
-                                    engine_type: GenericDrive.Type = GenericDrive.Type(fuel_level_status[f'{drive_id}EngineType'])
-                                except ValueError:
-                                    LOG_API.warning('Unknown engine_type type %s', fuel_level_status[f'{drive_id}EngineType'])
-                                    engine_type: GenericDrive.Type = GenericDrive.Type.UNKNOWN
-
-                                if drive_id in vehicle.drives.drives:
-                                    drive: GenericDrive = vehicle.drives.drives[drive_id]
-                                else:
-                                    if engine_type == GenericDrive.Type.ELECTRIC:
-                                        drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    elif engine_type == GenericDrive.Type.DIESEL:
-                                        drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    elif engine_type in [GenericDrive.Type.FUEL,
-                                                         GenericDrive.Type.GASOLINE,
-                                                         GenericDrive.Type.PETROL,
-                                                         GenericDrive.Type.CNG,
-                                                         GenericDrive.Type.LPG]:
-                                        drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    else:
-                                        drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
-                                    drive.type._set_value(engine_type)  # pylint: disable=protected-access
-                                    vehicle.drives.add_drive(drive)
-                        if 'currentSOC_pct' in fuel_level_status and fuel_level_status['currentSOC_pct'] is not None \
-                                and isinstance(vehicle, VolkswagenElectricVehicle):
-                            electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
-                            if electric_drive is not None:
-                                # pylint: disable-next=protected-access
-                                electric_drive.level._set_value(value=fuel_level_status['currentSOC_pct'], measured=captured_at)
-                                electric_drive.level.precision = 1
-                        if 'currentFuelLevel_pct' in fuel_level_status and fuel_level_status['currentFuelLevel_pct'] is not None \
-                                and isinstance(vehicle, VolkswagenCombustionVehicle):
-                            combustion_drive: Optional[CombustionDrive] = vehicle.get_combustion_drive()
-                            if combustion_drive is not None:
-                                # pylint: disable-next=protected-access
-                                combustion_drive.level._set_value(value=fuel_level_status['currentFuelLevel_pct'], measured=captured_at)
-                                combustion_drive.level.precision = 1
-                        log_extra_keys(LOG_API, 'fuelLevelStatus', fuel_level_status, {'carCapturedTimestamp', 'carType', 'currentSOC_pct',
-                                                                                       'currentFuelLevel_pct', 'primaryEngineType', 'secondaryEngineType'})
-                if 'rangeStatus' in data['measurements'] and data['measurements']['rangeStatus'] is not None:
-                    if 'value' in data['measurements']['rangeStatus'] and data['measurements']['rangeStatus']['value'] is not None:
-                        range_status = data['measurements']['rangeStatus']['value']
-                        if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
-                        if 'electricRange' in range_status and range_status['electricRange'] is not None:
-                            if isinstance(vehicle, VolkswagenElectricVehicle):
-                                electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
-                                if electric_drive is not None:
-                                    # pylint: disable-next=protected-access
-                                    electric_drive.range._set_value(value=range_status['electricRange'], measured=captured_at, unit=Length.KM)
-                                    electric_drive.range.precision = 1
-                        if 'gasolineRange' in range_status and range_status['gasolineRange'] is not None:
-                            if isinstance(vehicle, VolkswagenCombustionVehicle):
-                                combustion_drive: Optional[CombustionDrive] = vehicle.get_combustion_drive()
-                                if combustion_drive is not None:
-                                    # pylint: disable-next=protected-access
-                                    combustion_drive.range._set_value(value=range_status['gasolineRange'], measured=captured_at, unit=Length.KM)
-                                    combustion_drive.range.precision = 1
-                        if 'totalRange_km' in range_status and range_status['totalRange_km'] is not None:
-                            # pylint: disable-next=protected-access
-                            vehicle.drives.total_range._set_value(value=range_status['totalRange_km'], measured=captured_at, unit=Length.KM)
-                            vehicle.drives.total_range.precision = 1
-                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'electricRange', 'gasolineRange', 'totalRange_km'})
-                if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
-                    if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
-                        odometer_status = data['measurements']['odometerStatus']['value']
-                        if 'carCapturedTimestamp' not in odometer_status or odometer_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(odometer_status['carCapturedTimestamp'])
-                        if 'odometer' in odometer_status and odometer_status['odometer'] is not None:
-                            # pylint: disable-next=protected-access
-                            vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
-                            vehicle.odometer.precision = 1
-                        else:
-                            vehicle.odometer._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'odometerStatus', odometer_status, {'carCapturedTimestamp', 'odometer'})
-                else:
-                    vehicle.odometer._set_value(None)  # pylint: disable=protected-access
                 if 'temperatureOutsideStatus' in data['measurements'] and data['measurements']['temperatureOutsideStatus'] is not None:
                     if 'value' in data['measurements']['temperatureOutsideStatus'] and data['measurements']['temperatureOutsideStatus']['value'] is not None:
                         temperature_outside_status = data['measurements']['temperatureOutsideStatus']['value']
@@ -764,7 +615,7 @@ class Connector(BaseConnector):
                 if 'temperatureBatteryStatus' in data['measurements'] and data['measurements']['temperatureBatteryStatus'] is not None:
                     if 'value' in data['measurements']['temperatureBatteryStatus'] and data['measurements']['temperatureBatteryStatus']['value'] is not None:
                         temperature_battery_status = data['measurements']['temperatureBatteryStatus']['value']
-                        if isinstance(vehicle, VolkswagenElectricVehicle):
+                        if isinstance(vehicle, VolkswagenNAElectricVehicle):
                             electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
                             if electric_drive is not None:
                                 battery: Battery = electric_drive.battery
@@ -800,176 +651,154 @@ class Connector(BaseConnector):
             else:
                 vehicle.odometer._set_value(None)  # pylint: disable=protected-access
 
-            if 'access' in data and data['access'] is not None:
-                if 'accessStatus' in data['access'] and data['access']['accessStatus'] is not None:
-                    if 'value' in data['access']['accessStatus'] and data['access']['accessStatus']['value'] is not None:
-                        access_status = data['access']['accessStatus']['value']
-                        if 'carCapturedTimestamp' not in access_status or access_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(access_status['carCapturedTimestamp'])
-                        seen_door_ids: set[str] = set()
-                        if 'doors' in access_status and access_status['doors'] is not None:
-                            all_doors_closed = True
-                            for door_status in access_status['doors']:
-                                if 'name' in door_status and door_status['name'] is not None:
-                                    door_id = door_status['name']
-                                    seen_door_ids.add(door_id)
-                                    if door_id in vehicle.doors.doors:
-                                        door: Doors.Door = vehicle.doors.doors[door_id]
-                                    else:
-                                        door = Doors.Door(door_id=door_id, doors=vehicle.doors)
-                                        vehicle.doors.doors[door_id] = door
-                                    if 'status' in door_status and door_status['status'] is not None:
-                                        if 'locked' in door_status['status']:
-                                            door.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
-                                        elif 'unlocked' in door_status['status']:
-                                            door.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
-                                        else:
-                                            door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                        if 'open' in door_status['status']:
-                                            all_doors_closed = False
-                                            door.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                                        elif 'closed' in door_status['status']:
-                                            door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
-                                        elif 'unsupported' in door_status['status']:
-                                            door.open_state._set_value(Doors.OpenState.UNSUPPORTED, measured=captured_at)  # pylint: disable=protected-access
-                                        else:
-                                            door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                            LOG_API.info('Unknown door status %s', door_status['status'])
-                                    else:
-                                        door.open_state._set_value(None)  # pylint: disable=protected-access
-                                        door.lock_state._set_value(None)  # pylint: disable=protected-access
-                                else:
-                                    raise APIError('Could not fetch door status, door ID missing')
-                                log_extra_keys(LOG_API, 'doors', door_status, {'name', 'status'})
-                            if all_doors_closed:
-                                vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
-                            else:
-                                vehicle.doors.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                            if 'doorLockStatus' in access_status and access_status['doorLockStatus'] is not None:
-                                if access_status['doorLockStatus'] == 'locked':
-                                    vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
-                                elif access_status['doorLockStatus'] == 'unlocked':
-                                    vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
-                                elif access_status['doorLockStatus'] == 'invalid':
-                                    vehicle.doors.lock_state._set_value(Doors.LockState.INVALID, measured=captured_at)  # pylint: disable=protected-access
-                                else:
-                                    LOG_API.info('Unknown door lock status %s', access_status['doorLockStatus'])
-                                    vehicle.doors.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                            else:
-                                vehicle.doors.lock_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+            if 'exteriorStatus' in data and data['exteriorStatus'] is not None:
+                exteriorStatus = data['exteriorStatus']
+                seen_door_ids: set[str] = set()
+                if 'doorStatus' in exteriorStatus and exteriorStatus['doorStatus'] is not None:
+                    all_doors_closed = True
+                    if 'doorStatusTimestmap' in exteriorStatus['doorStatus']:
+                        captured_at = datetime.utcfromtimestamp(exteriorStatus['doorStatus']['doorStatusTimestamp'] / 1000)
+                    for door_id, door_status in exteriorStatus['doorStatus'].items():
+                        if door_status == 'NOTAVAILABLE' or door_id == 'doorStatusTimestmap':
+                            continue
+                        seen_door_ids.add(door_id)
+                        if door_id in vehicle.doors.doors:
+                            door: Doors.Door = vehicle.doors.doors[door_id]
+                        else:
+                            door = Doors.Door(door_id=door_id, doors=vehicle.doors)
+                            vehicle.doors.doors[door_id] = door
+                        if door_status == 'CLOSED':
+                            door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)
+                        elif door_status == 'OPEN':
+                            door.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)
+                            all_doors_closed = False
+                        else:
+                            door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                    if all_doors_closed:
+                        vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.doors.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                        LOG_API.info('Unknown door status %s', door_status['status'])
+                if 'doorLockStatus' in exteriorStatus and exteriorStatus['doorLockStatus'] is not None:
+                    if 'doorLockStatusTimestmap' in exteriorStatus['doorLockStatus']:
+                        captured_at = datetime.utcfromtimestamp(exteriorStatus['doorLockStatus']['doorLockStatusTimestamp'] / 1000)
+                    for door_id, door_status in exteriorStatus['doorLockStatus'].items():
+                        if door_status == 'NOTAVAILABLE' or door_id == 'doorLockStatusTimestamp':
+                            continue
+                        seen_door_ids.add(door_id)
+                        if door_id in vehicle.doors.doors:
+                            door: Doors.Door = vehicle.doors.doors[door_id]
+                        else:
+                            door = Doors.Door(door_id=door_id, doors=vehicle.doors)
+                            vehicle.doors.doors[door_id] = door
+                        if door_status == 'LOCKED':
+                            door.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)
+                        elif door_status == 'UNLOCKED':
+                            door.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)
+                        else:
+                            door.lock_state._set_value(Doors.LockState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                for door_id in vehicle.doors.doors.keys() - seen_door_ids:
+                    vehicle.doors.doors[door_id].enabled = False
+                if 'secure' in exteriorStatus and exteriorStatus['secure'] is not None:
+                    if exteriorStatus['secure'] == 'SECURE':
+                        vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    vehicle.doors.lock_state._set_value(None)  # pylint: disable=protected-access
 
+                if 'windowStatus' in exteriorStatus and exteriorStatus['windowStatus'] is not None:
+                    if 'windowStatusTimestmap' in exteriorStatus['windowStatus']:
+                        captured_at = datetime.utcfromtimestamp(exteriorStatus['windowStatus']['windowStatusTimestamp'] / 1000)
+                    seen_window_ids: set[str] = set()
+                    all_windows_closed = True
+                    for window_id, window_status in exteriorStatus['windowStatus'].items():
+                        if window_status == 'NOTAVAILABLE' or window_id == 'windowStatusTimestamp':
+                            continue
+                        seen_window_ids.add(window_id)
+                        if window_id in vehicle.windows.windows:
+                            window: Windows.Window = vehicle.windows.windows[window_id]
                         else:
-                            vehicle.doors.open_state._set_value(None)  # pylint: disable=protected-access
-                        for door_id in vehicle.doors.doors.keys() - seen_door_ids:
-                            vehicle.doors.doors[door_id].enabled = False
-                        if 'overallStatus' in access_status and access_status['overallStatus'] is not None:
-                            if access_status['overallStatus'] == 'safe':
-                                vehicle.doors.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)  # pylint: disable=protected-access
-                            elif access_status['overallStatus'] == 'unsafe':
-                                vehicle.doors.lock_state._set_value(Doors.LockState.UNLOCKED, measured=captured_at)  # pylint: disable=protected-access
+                            window = Windows.Window(window_id=window_id, windows=vehicle.windows)
+                            vehicle.windows.windows[window_id] = window
+                        if window_status == 'CLOSED':
+                            window.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                        elif window_status == 'OPEN':
+                            window.open_state._set_value(Windows.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                            all_windows_closed = False
+                        elif window_status == 'UNSUPPORTED':
+                            window.open_state._set_value(Windows.OpenState.UNSUPPORTED, measured=captured_at)  # pylint: disable=protected-access
+                        elif window_status == 'INVALID':
+                            window.open_state._set_value(Windows.OpenState.INVALID, measured=captured_at)  # pylint: disable=protected-access
                         else:
-                            vehicle.doors.lock_state._set_value(None)  # pylint: disable=protected-access
-                        seen_window_ids: set[str] = set()
-                        if 'windows' in access_status and access_status['windows'] is not None:
-                            all_windows_closed = True
-                            for window_status in access_status['windows']:
-                                if 'name' in window_status and window_status['name'] is not None:
-                                    window_id = window_status['name']
-                                    seen_window_ids.add(window_id)
-                                    if window_id in vehicle.windows.windows:
-                                        window: Windows.Window = vehicle.windows.windows[window_id]
-                                    else:
-                                        window = Windows.Window(window_id=window_id, windows=vehicle.windows)
-                                        vehicle.windows.windows[window_id] = window
-                                    if 'status' in window_status and window_status['status'] is not None:
-                                        if 'closed' in window_status['status']:
-                                            window.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
-                                        elif 'open' in window_status['status']:
-                                            all_windows_closed = False
-                                            window.open_state._set_value(Windows.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                                        elif 'unsupported' in window_status['status']:
-                                            # pylint: disable-next=protected-access
-                                            window.open_state._set_value(Windows.OpenState.UNSUPPORTED, measured=captured_at)
-                                        elif 'invalid' in window_status['status']:
-                                            window.open_state._set_value(Windows.OpenState.INVALID, measured=captured_at)  # pylint: disable=protected-access
-                                        else:
-                                            window.open_state._set_value(Windows.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                            LOG_API.info('Unknown window status %s', window_status['status'])
-                                    else:
-                                        window.open_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                                else:
-                                    raise APIError('Could not fetch window status, window ID missing')
-                            if all_windows_closed:
-                                vehicle.windows.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
-                            else:
-                                vehicle.windows.open_state._set_value(Windows.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                            window.open_state._set_value(Windows.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            LOG_API.info('Unknown window status %s', window_status)
+                    if all_windows_closed:
+                        vehicle.windows.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.windows.open_state._set_value(Windows.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    vehicle.windows.open_state._set_value(None) # pylint: disable=protected-access
+                    vehicle.windows.enabled = False
+                for window_id in vehicle.windows.windows.keys() - seen_window_ids:
+                    vehicle.windows.windows[window_id].enabled = False
+
+                if 'lightStatus' in exteriorStatus and exteriorStatus['lightStatus'] is not None:
+                    all_lights_off = True
+                    seen_light_ids: set[str] = set()
+                    for light_id, light_status in exteriorStatus['lightStatus'].items():
+                        if light_status == 'NOTAVAILABLE':
+                            continue
+                        seen_light_ids.add(light_id)
+                        if light_id in vehicle.lights.lights:
+                            light: Lights.Light = vehicle.lights.lights[light_id]
                         else:
-                            vehicle.windows.open_state._set_value(None)  # pylint: disable=protected-access
-                        for window_id in vehicle.windows.windows.keys() - seen_window_ids:
-                            vehicle.windows.windows[window_id].enabled = False
-                        log_extra_keys(LOG_API, 'accessStatus', access_status, {'carCapturedTimestamp',
-                                                                                'doors',
-                                                                                'overallStatus',
-                                                                                'doorLockStatus',
-                                                                                'windows'})
-                log_extra_keys(LOG_API, 'access', data['access'], {'accessStatus'})
+                            light: Lights.Light = Lights.Light(light_id=light_id, lights=vehicle.lights)
+                            vehicle.lights.lights[light_id] = light
+                        if light_status == 'ON':
+                            all_lights_off = False
+                            light.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
+                        elif light_status == 'OFF':
+                            light.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
+                        elif light_status == 'INVALID':
+                            light.light_state._set_value(Lights.LightState.INVALID, measured=captured_at)  # pylint: disable=protected-access
+                        else:
+                            light.light_state._set_value(Lights.LightState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            LOG_API.info('Unknown light status %s', light_status)
+                    if all_lights_off:
+                        vehicle.lights.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.lights.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
+                    for light_id in vehicle.lights.lights.keys() - seen_light_ids:
+                        vehicle.lights.lights[light_id].enabled = False
+                else:
+                    vehicle.lights.light_state._set_value(None)
+                    vehicle.lights.enabled = False
+
+
+                log_extra_keys(LOG_API, 'exteriorStatus', exteriorStatus, {'secure',
+                                                                           'doorStatus',
+                                                                           'doorLockStatus',
+                                                                           'windowStatus',
+                                                                           'lightStatus'})
             else:
                 vehicle.doors.lock_state._set_value(None)  # pylint: disable=protected-access
                 vehicle.doors.open_state._set_value(None)  # pylint: disable=protected-access
                 vehicle.doors.enabled = False
-            if 'vehicleLights' in data and data['vehicleLights'] is not None:
-                if 'lightsStatus' in data['vehicleLights'] and data['vehicleLights']['lightsStatus'] is not None:
-                    lights_status = data['vehicleLights']['lightsStatus']
-                    seen_light_ids: set[str] = set()
-                    if 'value' in lights_status and lights_status['value'] is not None:
-                        lights_status = lights_status['value']
-                        if 'carCapturedTimestamp' not in lights_status or lights_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(lights_status['carCapturedTimestamp'])
-                        if 'lights' in lights_status and lights_status['lights'] is not None:
-                            all_lights_off = True
-                            for light_status in lights_status['lights']:
-                                if 'name' in light_status and light_status['name'] is not None:
-                                    light_id = light_status['name']
-                                    seen_light_ids.add(light_id)
-                                    if light_id in vehicle.lights.lights:
-                                        light: Lights.Light = vehicle.lights.lights[light_id]
-                                    else:
-                                        light: Lights.Light = Lights.Light(light_id=light_id, lights=vehicle.lights)
-                                        vehicle.lights.lights[light_id] = light
-                                    if 'status' in light_status and light_status['status'] is not None:
-                                        if light_status['status'] == 'on':
-                                            all_lights_off = False
-                                            light.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
-                                        elif light_status['status'] == 'off':
-                                            light.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
-                                        elif light_status['status'] == 'invalid':
-                                            light.light_state._set_value(Lights.LightState.INVALID, measured=captured_at)  # pylint: disable=protected-access
-                                        else:
-                                            light.light_state._set_value(Lights.LightState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
-                                            LOG_API.info('Unknown light status %s', light_status['status'])
-                                    else:
-                                        light.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                                else:
-                                    raise APIError('Could not fetch light status, light ID missing')
-                                log_extra_keys(LOG_API, 'lights', light_status, {'name', 'status'})
-                            if all_lights_off:
-                                vehicle.lights.light_state._set_value(Lights.LightState.OFF, measured=captured_at)  # pylint: disable=protected-access
-                            else:
-                                vehicle.lights.light_state._set_value(Lights.LightState.ON, measured=captured_at)  # pylint: disable=protected-access
-                        else:
-                            vehicle.lights.light_state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'lights', lights_status, {'carCapturedTimestamp', 'lights'})
-                    for light_id in vehicle.lights.lights.keys() - seen_light_ids:
-                        vehicle.lights.lights[light_id].enabled = False
-                else:
-                    vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
-                    vehicle.lights.enabled = False
-            else:
-                vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
+                vehicle.windows.open_state._set_value(None) # pylint: disable=protected-access
+                vehicle.windows.enabled = False
+                vehicle.liughts.light_state._set_value(None)
                 vehicle.lights.enabled = False
-            if 'climatisation' in data and data['climatisation'] is not None:
+
+            if isinstance(vehicle, VolkswagenNAElectricVehicle):
+                climate_url = self.base_url + f'/ev/v1/vehicle/{vehicle.uuid}/climate/summary'
+                climate_data: Dict[str, Any] | None = self._fetch_data(climate_url, self.session)
+                if 'data' in climate_data:
+                    climate_data = climate_data['data']
+                if 'carCapturedTimestamp' in climate_data:
+                    captured_at: datetime = datetime.utcfromtimestamp(climate_data['carCapturedTimestamp'] / 1000)
+                else:
+                    raise APIError('Missing carCapturedTimestamp on climatization summary')
                 if not isinstance(vehicle.climatization, VolkswagenClimatization):
                     vehicle.climatization = VolkswagenClimatization(origin=vehicle.climatization)
                 assert isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings)
@@ -979,186 +808,172 @@ class Connector(BaseConnector):
                     start_stop_command._add_on_set_hook(self.__on_air_conditioning_start_stop)  # pylint: disable=protected-access
                     start_stop_command.enabled = True
                     vehicle.climatization.commands.add_command(start_stop_command)
-                if 'climatisationStatus' in data['climatisation'] and data['climatisation']['climatisationStatus'] is not None:
-                    climatisation_status = data['climatisation']['climatisationStatus']
-                    if 'value' in climatisation_status and climatisation_status['value'] is not None:
-                        climatisation_status = climatisation_status['value']
+                    if 'climateStatusReport' in climate_data and climate_data['climateStatusReport'] is not None:
+                        climatisation_status = climate_data['climateStatusReport']
                         if 'carCapturedTimestamp' not in climatisation_status or climatisation_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(climatisation_status['carCapturedTimestamp'])
-                        if 'climatisationState' in climatisation_status and climatisation_status['climatisationState'] is not None:
-                            if climatisation_status['climatisationState'] in [item.value for item in VolkswagenClimatization.ClimatizationState]:
+                        captured_at: datetime = datetime.utcfromtimestamp(climatisation_status['carCapturedTimestamp'] / 1000)
+                        if 'climateStatusInd' in climatisation_status and climatisation_status['climateStatusInd'] is not None:
+                            if climatisation_status['climateStatusInd'] in [item.value for item in VolkswagenClimatization.ClimatizationState]:
                                 climatization_state: VolkswagenClimatization.ClimatizationState = \
-                                    VolkswagenClimatization.ClimatizationState(climatisation_status['climatisationState'])
+                                    VolkswagenClimatization.ClimatizationState(climatisation_status['climateStatusInd'])
                             else:
-                                LOG_API.info('Unknown climatization state %s not in %s', climatisation_status['climatisationState'],
+                                LOG_API.info('Unknown climatization state %s not in %s', climatisation_status['climateStatusInd'],
                                              str(VolkswagenClimatization.ClimatizationState))
                                 climatization_state = VolkswagenClimatization.ClimatizationState.UNKNOWN
                             vehicle.climatization.state._set_value(value=climatization_state, measured=captured_at)  # pylint: disable=protected-access
                         else:
                             vehicle.climatization.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'remainingClimatisationTime_min' in climatisation_status and climatisation_status['remainingClimatisationTime_min'] is not None:
-                            remaining_duration: timedelta = timedelta(minutes=climatisation_status['remainingClimatisationTime_min'])
+                        if 'remainingClimatisationTimeMin' in climatisation_status and climatisation_status['remainingClimatisationTimeMin'] is not None:
+                            remaining_duration: timedelta = timedelta(minutes=climatisation_status['remainingClimatisationTimeMin'])
                             estimated_date_reached: datetime = captured_at + remaining_duration
                             estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
                             # pylint: disable-next=protected-access
                             vehicle.climatization.estimated_date_reached._set_value(value=estimated_date_reached, measured=captured_at)
                         else:
                             vehicle.climatization.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'climatisationStatus', climatisation_status, {'carCapturedTimestamp', 'climatisationState',
-                                                                                              'remainingClimatisationTime_min'})
-                else:
-                    vehicle.climatization.state._set_value(None)  # pylint: disable=protected-access
-                    vehicle.climatization.estimated_date_reached._set_value(None)  # pylint: disable=protected-access
-                if 'climatisationSettings' in data['climatisation'] and data['climatisation']['climatisationSettings'] is not None:
-                    climatisation_settings = data['climatisation']['climatisationSettings']
-                    if 'value' in climatisation_settings and climatisation_settings['value'] is not None:
-                        climatisation_settings = climatisation_settings['value']
-                        if 'carCapturedTimestamp' not in climatisation_settings or climatisation_settings['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(climatisation_settings['carCapturedTimestamp'])
-                        preferred_unit: Temperature = Temperature.C
-                        precision: float = 0.5
-                        if 'unitInCar' in climatisation_settings and climatisation_settings['unitInCar'] is not None:
-                            if climatisation_settings['unitInCar'] == 'farenheit':
+                        log_extra_keys(LOG_API, 'climateStatusReport', climatisation_status, {'carCapturedTimestamp', 'climateStatusInd',
+                                                                                                  'remainingClimatisationTimeMin'})
+                    else:
+                        vehicle.climatization.state._set_value(None)  # pylint: disable=protected-access
+                        vehicle.climatization.estimated_date_reached._set_value(None)  # pylint: disable=protected-access
+                if 'climateSettings' in climate_data and climate_data['climateSettings'] is not None:
+                    climatisation_settings = climate_data['climateSettings']
+                    if 'carCapturedTimestamp' not in climatisation_settings or climatisation_settings['carCapturedTimestamp'] is None:
+                        raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                    captured_at: datetime = datetime.utcfromtimestamp(climatisation_settings['carCapturedTimestamp'] / 1000)
+                    preferred_unit: Temperature = Temperature.C
+                    precision: float = 0.5
+                    if 'targetTemperature' in climatisation_settings and climatisation_settings['targetTemperature'] is not None:
+                        if 'unit' in climatisation_settings['targetTemperature'] and climatisation_settings['targetTemperature']['unit'] is not None:
+                            if climatisation_settings['targetTemperature']['unit'] == 'fahrenheit':
                                 preferred_unit = Temperature.F
                                 vehicle.climatization.settings.unit_in_car = Temperature.F
-                            elif climatisation_settings['unitInCar'] == 'celsius':
+                            elif climatisation_settings['targetTemperature']['unit'] == 'celsius':
                                 preferred_unit = Temperature.C
                                 vehicle.climatization.settings.unit_in_car = Temperature.C
                             else:
-                                LOG_API.info('Unknown unitInCar %s', climatisation_settings['unitInCar'])
-                        if preferred_unit == Temperature.C and 'targetTemperature_C' in climatisation_settings:
-                            target_temperature: Optional[float] = climatisation_settings['targetTemperature_C']
-                            actual_unit: Optional[Temperature] = Temperature.C
+                                LOG_API.info('Unknown unitInCar %s', climatisation_settings['targetTemperature']['unit'])
+                        target_temperature: float = climatisation_settings['targetTemperature']['temperature']
+                        if preferred_unit == Temperature.C:
                             min_temperature: Optional[float] = 16
                             max_temperature: Optional[float] = 29.5
-                        elif preferred_unit == Temperature.F and 'targetTemperature_F' in climatisation_settings:
-                            target_temperature = climatisation_settings['targetTemperature_F']
-                            actual_unit = Temperature.F
-                            min_temperature: Optional[float] = 61
-                            max_temperature: Optional[float] = 85
-                        elif 'targetTemperature_C' in climatisation_settings:
-                            target_temperature = climatisation_settings['targetTemperature_C']
-                            actual_unit = Temperature.C
-                            min_temperature: Optional[float] = 16
-                            max_temperature: Optional[float] = 29.5
-                        elif 'targetTemperature_F' in climatisation_settings:
-                            target_temperature = climatisation_settings['targetTemperature_F']
-                            actual_unit = Temperature.F
+                        elif preferred_unit == Temperature.F:
                             min_temperature: Optional[float] = 61
                             max_temperature: Optional[float] = 85
                         else:
-                            target_temperature = None
-                            actual_unit = None
                             min_temperature: Optional[float] = None
                             max_temperature: Optional[float] = None
                         vehicle.climatization.settings.target_temperature._set_value(value=target_temperature,  # pylint: disable=protected-access
                                                                                      measured=captured_at,
-                                                                                     unit=actual_unit)
+                                                                                     unit=preferred_unit)
                         vehicle.climatization.settings.target_temperature.minimum = min_temperature
                         vehicle.climatization.settings.target_temperature.maximum = max_temperature
                         vehicle.climatization.settings.target_temperature.precision = precision
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
-                        if 'climatisationWithoutExternalPower' in climatisation_settings \
-                                and climatisation_settings['climatisationWithoutExternalPower'] is not None:
-                            vehicle.climatization.settings.climatization_without_external_power._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['climatisationWithoutExternalPower'], measured=captured_at)
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.climatization_without_external_power._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.climatization_without_external_power._is_changeable = True  # pylint: disable=protected-access
-                        else:
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.climatization_without_external_power._set_value(None, measured=captured_at)
-                        if 'climatizationAtUnlock' in climatisation_settings and climatisation_settings['climatizationAtUnlock'] is not None:
-                            vehicle.climatization.settings.climatization_at_unlock._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['climatizationAtUnlock'], measured=captured_at)
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.climatization_at_unlock._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.climatization_at_unlock._is_changeable = True  # pylint: disable=protected-access
-                        else:
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.climatization_at_unlock._set_value(None, measured=captured_at)
-                        if 'windowHeatingEnabled' in climatisation_settings and climatisation_settings['windowHeatingEnabled'] is not None:
-                            vehicle.climatization.settings.window_heating._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['windowHeatingEnabled'], measured=captured_at)
+                    if 'climatisationWithoutExternalPower' in climatisation_settings \
+                            and climatisation_settings['climatisationWithoutExternalPower'] is not None:
+                        vehicle.climatization.settings.climatization_without_external_power._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['climatisationWithoutExternalPower'], measured=captured_at)
                         # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.window_heating._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.window_heating._is_changeable = True  # pylint: disable=protected-access
+                        vehicle.climatization.settings.climatization_without_external_power._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.climatization_without_external_power._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.climatization_without_external_power._set_value(None, measured=captured_at)
+
+                    if 'climatizationElementSettings' in climatisation_settings and climatisation_settings['climatizationElementSettings'] is not None:
+                        climatisation_settings = climatisation_settings['climatizationElementSettings']
+
+                    if 'climatizationAtUnlock' in climatisation_settings and climatisation_settings['climatizationAtUnlock'] is not None:
+                        vehicle.climatization.settings.climatization_at_unlock._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['climatizationAtUnlock'], measured=captured_at)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.climatization_at_unlock._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.climatization_at_unlock._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.climatization_at_unlock._set_value(None, measured=captured_at)
+                    if 'windowHeatingEnabled' in climatisation_settings and climatisation_settings['windowHeatingEnabled'] is not None:
+                        vehicle.climatization.settings.window_heating._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['windowHeatingEnabled'], measured=captured_at)
+                    # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.window_heating._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.window_heating._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.window_heating._set_value(None, measured=captured_at)
+                    if 'zoneFrontLeftEnabled' in climatisation_settings and climatisation_settings['zoneFrontLeftEnabled'] is not None:
+                        vehicle.climatization.settings.front_zone_left_enabled._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['zoneFrontLeftEnabled'], measured=captured_at)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.front_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.front_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.front_zone_left_enabled._set_value(None, measured=captured_at)
+                    if 'zoneFrontRightEnabled' in climatisation_settings and climatisation_settings['zoneFrontRightEnabled'] is not None:
+                        vehicle.climatization.settings.front_zone_right_enabled._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['zoneFrontRightEnabled'], measured=captured_at)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.front_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.front_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.front_zone_right_enabled._set_value(None, measured=captured_at)
+                    if 'zoneRearLeftEnabled' in climatisation_settings and climatisation_settings['zoneRearLeftEnabled'] is not None:
+                        vehicle.climatization.settings.rear_zone_left_enabled._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['zoneRearLeftEnabled'], measured=captured_at)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.rear_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.rear_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.rear_zone_left_enabled._set_value(None, measured=captured_at)
+                    if 'zoneRearRightEnabled' in climatisation_settings and climatisation_settings['zoneRearRightEnabled'] is not None:
+                        vehicle.climatization.settings.rear_zone_right_enabled._set_value(  # pylint: disable=protected-access
+                            climatisation_settings['zoneRearRightEnabled'], measured=captured_at)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.rear_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.rear_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                    else:
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.rear_zone_right_enabled._set_value(None, measured=captured_at)
+                    if vehicle.climatization.settings.front_zone_left_enabled.enabled \
+                            or vehicle.climatization.settings.front_zone_right_enabled.enabled \
+                            or vehicle.climatization.settings.rear_zone_left_enabled.enabled \
+                            or vehicle.climatization.settings.rear_zone_right_enabled.enabled:
+                        if vehicle.climatization.settings.front_zone_left_enabled.value \
+                                or vehicle.climatization.settings.front_zone_right_enabled.value \
+                                or vehicle.climatization.settings.rear_zone_left_enabled.value \
+                                or vehicle.climatization.settings.rear_zone_right_enabled.value:
+                            vehicle.climatization.settings.seat_heating._set_value(True, measured=captured_at)  # pylint: disable=protected-access
                         else:
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.window_heating._set_value(None, measured=captured_at)
-                        if 'zoneFrontLeftEnabled' in climatisation_settings and climatisation_settings['zoneFrontLeftEnabled'] is not None:
-                            vehicle.climatization.settings.front_zone_left_enabled._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['zoneFrontLeftEnabled'], measured=captured_at)
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.front_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.front_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.seat_heating._set_value(False, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.climatization.settings.seat_heating._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'heaterSource' in climatisation_settings and climatisation_settings['heaterSource'] is not None:
+                        if climatisation_settings['heaterSource'] in [item.value for item in Climatization.Settings.HeaterSource]:
+                            vehicle.climatization.settings.heater_source._set_value(  # pylint: disable=protected-access
+                                Climatization.Settings.HeaterSource(climatisation_settings['heaterSource']), measured=captured_at)
                         else:
+                            LOG_API.info('Unknown heater source %s', climatisation_settings['heaterSource'])
                             # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.front_zone_left_enabled._set_value(None, measured=captured_at)
-                        if 'zoneFrontRightEnabled' in climatisation_settings and climatisation_settings['zoneFrontRightEnabled'] is not None:
-                            vehicle.climatization.settings.front_zone_right_enabled._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['zoneFrontRightEnabled'], measured=captured_at)
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.front_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.front_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
-                        else:
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.front_zone_right_enabled._set_value(None, measured=captured_at)
-                        if 'zoneRearLeftEnabled' in climatisation_settings and climatisation_settings['zoneRearLeftEnabled'] is not None:
-                            vehicle.climatization.settings.rear_zone_left_enabled._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['zoneRearLeftEnabled'], measured=captured_at)
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.rear_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.rear_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
-                        else:
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.rear_zone_left_enabled._set_value(None, measured=captured_at)
-                        if 'zoneRearRightEnabled' in climatisation_settings and climatisation_settings['zoneRearRightEnabled'] is not None:
-                            vehicle.climatization.settings.rear_zone_right_enabled._set_value(  # pylint: disable=protected-access
-                                climatisation_settings['zoneRearRightEnabled'], measured=captured_at)
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.rear_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                            vehicle.climatization.settings.rear_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
-                        else:
-                            # pylint: disable-next=protected-access
-                            vehicle.climatization.settings.rear_zone_right_enabled._set_value(None, measured=captured_at)
-                        if vehicle.climatization.settings.front_zone_left_enabled.enabled \
-                                or vehicle.climatization.settings.front_zone_right_enabled.enabled \
-                                or vehicle.climatization.settings.rear_zone_left_enabled.enabled \
-                                or vehicle.climatization.settings.rear_zone_right_enabled.enabled:
-                            if vehicle.climatization.settings.front_zone_left_enabled.value \
-                                    or vehicle.climatization.settings.front_zone_right_enabled.value \
-                                    or vehicle.climatization.settings.rear_zone_left_enabled.value \
-                                    or vehicle.climatization.settings.rear_zone_right_enabled.value:
-                                vehicle.climatization.settings.seat_heating._set_value(True, measured=captured_at)  # pylint: disable=protected-access
-                            else:
-                                vehicle.climatization.settings.seat_heating._set_value(False, measured=captured_at)  # pylint: disable=protected-access
-                        else:
-                            vehicle.climatization.settings.seat_heating._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'heaterSource' in climatisation_settings and climatisation_settings['heaterSource'] is not None:
-                            if climatisation_settings['heaterSource'] in [item.value for item in Climatization.Settings.HeaterSource]:
-                                vehicle.climatization.settings.heater_source._set_value(  # pylint: disable=protected-access
-                                    Climatization.Settings.HeaterSource(climatisation_settings['heaterSource']), measured=captured_at)
-                            else:
-                                LOG_API.info('Unknown heater source %s', climatisation_settings['heaterSource'])
-                                # pylint: disable-next=protected-access
-                                vehicle.climatization.settings.heater_source._set_value(Climatization.Settings.HeaterSource.UNKNOWN, measured=captured_at)
-                        else:
-                            vehicle.climatization.settings.heater_source._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'climatisationSettings', climatisation_settings, {'carCapturedTimestamp',
-                                                                                                  'unitInCar',
-                                                                                                  'targetTemperature_C',
-                                                                                                  'targetTemperature_F',
-                                                                                                  'climatisationWithoutExternalPower',
-                                                                                                  'climatizationAtUnlock',
-                                                                                                  'windowHeatingEnabled',
-                                                                                                  'zoneRearLeftEnabled',
-                                                                                                  'zoneRearRightEnabled',
-                                                                                                  'heaterSource'})
+                            vehicle.climatization.settings.heater_source._set_value(Climatization.Settings.HeaterSource.UNKNOWN, measured=captured_at)
+                    else:
+                        vehicle.climatization.settings.heater_source._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    log_extra_keys(LOG_API, 'climatisationSettings', climatisation_settings, {'carCapturedTimestamp',
+                                                                                              'unitInCar',
+                                                                                              'targetTemperature_C',
+                                                                                              'targetTemperature_F',
+                                                                                              'climatisationWithoutExternalPower',
+                                                                                              'climatizationAtUnlock',
+                                                                                              'windowHeatingEnabled',
+                                                                                              'zoneRearLeftEnabled',
+                                                                                              'zoneRearRightEnabled',
+                                                                                              'heaterSource'})
                 else:
                     vehicle.climatization.settings.target_temperature._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.climatization_without_external_power._set_value(None)  # pylint: disable=protected-access
@@ -1171,9 +986,9 @@ class Connector(BaseConnector):
                     vehicle.climatization.settings.seat_heating._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.heater_source._set_value(None)  # pylint: disable=protected-access
                 
-                if 'windowHeatingStatus' in data['climatisation'] and data['climatisation']['windowHeatingStatus'] is not None:
-                    if 'value' in data['climatisation']['windowHeatingStatus'] and data['climatisation']['windowHeatingStatus']['value'] is not None:
-                        window_heating_status = data['climatisation']['windowHeatingStatus']['value']
+                if 'windowHeatingStatus' in climate_data and climate_data['windowHeatingStatus'] is not None:
+                    if 'value' in climate_data['windowHeatingStatus'] and climate_data['windowHeatingStatus']['value'] is not None:
+                        window_heating_status = climate_data['windowHeatingStatus']['value']
                         if 'carCapturedTimestamp' not in window_heating_status or window_heating_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(window_heating_status['carCapturedTimestamp'])
@@ -1223,184 +1038,186 @@ class Connector(BaseConnector):
                             vehicle.window_heatings.commands.add_command(start_stop_command)
                         log_extra_keys(LOG_API, 'windowHeatingStatus', window_heating_status, {'carCapturedTimestamp', 'windowHeatingStatus'})
 
-                log_extra_keys(LOG_API, 'climatisation', data['climatisation'], {'climatisationStatus', 'climatisationSettings', 'windowHeatingStatus'})
-            if 'charging' in data and data['charging'] is not None:
-                if not isinstance(vehicle, VolkswagenElectricVehicle):
-                    LOG.debug('Promoting %s to VolkswagenElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                    vehicle = VolkswagenElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                log_extra_keys(LOG_API, 'climatisation', climate_data, {'climatisationStatus', 'climatisationSettings', 'windowHeatingStatus'})
+
+            if isinstance(vehicle, VolkswagenNAElectricVehicle):
                 if vehicle.charging is not None and vehicle.charging.commands is not None \
                         and not vehicle.charging.commands.contains_command('start-stop'):
                     start_stop_command = ChargingStartStopCommand(parent=vehicle.charging.commands)
                     start_stop_command._add_on_set_hook(self.__on_charging_start_stop)  # pylint: disable=protected-access
                     start_stop_command.enabled = True
                     vehicle.charging.commands.add_command(start_stop_command)
-                if 'chargingStatus' in data['charging'] and data['charging']['chargingStatus'] is not None:
-                    if 'value' in data['charging']['chargingStatus'] and data['charging']['chargingStatus']['value'] is not None:
-                        charging_status = data['charging']['chargingStatus']['value']
-                        if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(charging_status['carCapturedTimestamp'])
-                        if 'chargingState' in charging_status and charging_status['chargingState'] is not None:
-                            if charging_status['chargingState'] in [item.value for item in VolkswagenCharging.VolkswagenChargingState]:
-                                volkswagen_charging_state = VolkswagenCharging.VolkswagenChargingState(charging_status['chargingState'])
-                                charging_state: Charging.ChargingState = mapping_volskwagen_charging_state[volkswagen_charging_state]
-                            else:
-                                LOG_API.info('Unkown charging state %s not in %s', charging_status['chargingState'],
-                                             str(VolkswagenCharging.VolkswagenChargingState))
-                                charging_state = Charging.ChargingState.UNKNOWN
 
-                            # pylint: disable-next=protected-access
-                            vehicle.charging.state._set_value(value=charging_state, measured=captured_at)
+                charge_url = self.base_url + f'/ev/v1/vehicle/{vehicle.uuid}/charge/summary'
+                charge_data: Dict[str, Any] | None = self._fetch_data(charge_url, self.session)
+                if 'data' in charge_data:
+                    charge_data = charge_data['data']
+                if 'carCapturedTimestamp' in charge_data:
+                    captured_at: datetime = datetime.utcfromtimestamp(charge_data['carCapturedTimestamp'] / 1000)
+                else:
+                    raise APIError('Missing carCapturedTimestamp on EV Charge summary')
+
+                print('charge data: ', charge_data)
+
+                if 'batteryStatus' in charge_data and charge_data['batteryStatus'] is not None:
+                    battery_status = charge_data['batteryStatus']
+                    if 'carCapturedTimestamp' not in battery_status or battery_status['carCapturedTimestamp'] is None:
+                        raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                    captured_at: datetime = datetime.utcfromtimestamp(battery_status['carCapturedTimestamp'] / 1000)
+                    if 'currentSOCPct' in battery_status  and battery_status['currentSOCPct'] is not None:
+                        drive = vehicle.drives.drives['primary']
+                        # pylint: disable-next=protected-access
+                        drive.level._set_value(value=float(battery_status['currentSOCPct']), measured=captured_at)
+                        drive.level.precision = 1
+
+                if 'chargingStatus' in charge_data and charge_data['chargingStatus'] is not None:
+                    charging_status = charge_data['chargingStatus']
+                    if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
+                        raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                    captured_at: datetime = datetime.utcfromtimestamp(charging_status['carCapturedTimestamp'] / 1000)
+
+                    if charging_status['currentChargeState'] in [item.value for item in VolkswagenNACharging.VolkswagenChargingState]:
+                        volkswagen_charging_state = VolkswagenNACharging.VolkswagenChargingState(charging_status['currentChargeState'])
+                        charging_state: Charging.ChargingState = mapping_volskwagen_charging_state[volkswagen_charging_state]
+                    else:
+                        LOG_API.info('Unkown charging state %s not in %s', charging_status['currentChargeState'],
+                                     str(VolkswagenNACharging.VolkswagenChargingState))
+                        charging_state = Charging.ChargingState.UNKNOWN
+
+                    # pylint: disable-next=protected-access
+                    vehicle.charging.state._set_value(value=charging_state, measured=captured_at)
+                    if 'chargeType' in charging_status and charging_status['chargeType'] is not None:
+                        if charging_status['chargeType'] in [item.value for item in Charging.ChargingType]:
+                            vehicle.charging.type._set_value(value=Charging.ChargingType(charging_status['chargeType']),  # pylint: disable=protected-access
+                                                             measured=captured_at)
                         else:
-                            vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'chargeType' in charging_status and charging_status['chargeType'] is not None:
-                            if charging_status['chargeType'] in [item.value for item in Charging.ChargingType]:
-                                vehicle.charging.type._set_value(value=Charging.ChargingType(charging_status['chargeType']),  # pylint: disable=protected-access
-                                                                 measured=captured_at)
-                            else:
-                                LOG_API.info('Unknown charge type %s', charging_status['chargeType'])
-                                vehicle.charging.type._set_value(Charging.ChargingType.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            LOG_API.info('Unknown charge type %s', charging_status['chargeType'])
+                            vehicle.charging.type._set_value(Charging.ChargingType.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                    else:
+                        vehicle.charging.type._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'chargePower' in charging_status and charging_status['chargePower'] is not None:
+                        vehicle.charging.power._set_value(value=float(charging_status['chargePower']),  # pylint: disable=protected-access
+                                                          measured=captured_at, unit=Power.KW)
+                    else:
+                        vehicle.charging.power._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'chargeRate' in charging_status and charging_status['chargeRate'] is not None:
+                        vehicle.charging.rate._set_value(value=float(charging_status['chargeRate']),  # pylint: disable=protected-access
+                                                         measured=captured_at, unit=Speed.KMH)
+                    else:
+                        vehicle.charging.rate._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'remainingChargingTimeToComplete' in charging_status and charging_status['remainingChargingTimeToComplete'] is not None:
+                        remaining_duration: timedelta = timedelta(minutes=charging_status['remainingChargingTimeToComplete'])
+                        estimated_date_reached: datetime = captured_at + remaining_duration
+                        estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
+                        vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached,  # pylint: disable=protected-access
+                                                                           measured=captured_at)
+                    else:
+                        vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    vehicle.charging.state._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'chargingStatus', 'carCapturedTimestamp',
+                                                                            'chargingState', 'chargePower',
+                                                                            'chargeRate', 'remainingChargingTimeToComplete'})
+
+                if 'chargeSettings' in charge_data and charge_data['chargeSettings'] is not None:
+                    charging_settings = charge_data['chargeSettings']
+                    if 'carCapturedTimestamp' not in charging_settings or charging_settings['carCapturedTimestamp'] is None:
+                        raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                    captured_at: datetime = datetime.utcfromtimestamp(charging_settings['carCapturedTimestamp'] / 1000)
+                    if 'maxChargingCurrent' in charging_settings and charging_settings['maxChargingCurrent'] is not None:
+                        if isinstance(vehicle.charging.settings, VolkswagenNACharging.Settings):
+                            vehicle.charging.settings.max_current_in_ampere = True
                         else:
-                            vehicle.charging.type._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'chargePower_kW' in charging_status and charging_status['chargePower_kW'] is not None:
-                            vehicle.charging.power._set_value(value=charging_status['chargePower_kW'],  # pylint: disable=protected-access
-                                                              measured=captured_at, unit=Power.KW)
+                            raise ValueError('Charging settings not of type VolkswagenNACharging.Settings')
+
+                        if charging_settings['maxChargingCurrent'] == 'max':
+                            charging_settings['maxChargingCurrent'] = 32.0
+                        vehicle.charging.settings.maximum_current.minimum = 6.0
+                        vehicle.charging.settings.maximum_current.maximum = 32.0
+                        vehicle.charging.settings.maximum_current.precision = 1.0
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
+                        vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
+                        vehicle.charging.settings.maximum_current._set_value(charging_settings['maxChargingCurrent'],  # pylint: disable=protected-access
+                                                                             measured=captured_at)
+                    else:
+                        vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'autoUnlockPlugWhenCharged' in charging_settings and charging_settings['autoUnlockPlugWhenCharged'] is not None:
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.auto_unlock._add_on_set_hook(self.__on_charging_settings_change)
+                        vehicle.charging.settings.auto_unlock._is_changeable = True  # pylint: disable=protected-access
+                        if charging_settings['autoUnlockPlugWhenCharged'] == 'on' or charging_settings['autoUnlockPlugWhenCharged'] == 'permanent':
+                            vehicle.charging.settings.auto_unlock._set_value(True,  # pylint: disable=protected-access
+                                                                             measured=captured_at)
+                        elif charging_settings['autoUnlockPlugWhenCharged'] == 'off':
+                            vehicle.charging.settings.auto_unlock._set_value(False,  # pylint: disable=protected-access
+                                                                             measured=captured_at)
                         else:
-                            vehicle.charging.power._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'chargeRate_kmph' in charging_status and charging_status['chargeRate_kmph'] is not None:
-                            vehicle.charging.rate._set_value(value=charging_status['chargeRate_kmph'],  # pylint: disable=protected-access
-                                                             measured=captured_at, unit=Speed.KMH)
-                        else:
-                            vehicle.charging.rate._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'remainingChargingTimeToComplete_min' in charging_status and charging_status['remainingChargingTimeToComplete_min'] is not None:
-                            remaining_duration: timedelta = timedelta(minutes=charging_status['remainingChargingTimeToComplete_min'])
-                            estimated_date_reached: datetime = captured_at + remaining_duration
-                            estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
-                            vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached,  # pylint: disable=protected-access
-                                                                               measured=captured_at)
-                        else:
-                            vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'chargingStatus', 'carCapturedTimestamp',
-                                                                                    'chargingState', 'chargePower_kW',
-                                                                                    'chargeRate_kmph', 'remainingChargingTimeToComplete_min'})
-                if 'chargingSettings' in data['charging'] and data['charging']['chargingSettings'] is not None:
-                    if 'value' in data['charging']['chargingSettings'] and data['charging']['chargingSettings']['value'] is not None:
-                        charging_settings = data['charging']['chargingSettings']['value']
-                        if 'carCapturedTimestamp' not in charging_settings or charging_settings['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(charging_settings['carCapturedTimestamp'])
-                        if 'maxChargeCurrentAC_A' in charging_settings and charging_settings['maxChargeCurrentAC_A'] is not None:
-                            if isinstance(vehicle.charging.settings, VolkswagenCharging.Settings):
-                                vehicle.charging.settings.max_current_in_ampere = True
-                            else:
-                                raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
-                            vehicle.charging.settings.maximum_current.minimum = 6.0
-                            vehicle.charging.settings.maximum_current.maximum = 32.0
-                            vehicle.charging.settings.maximum_current.precision = 1.0
-                            # pylint: disable-next=protected-access
-                            vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
-                            vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
-                            vehicle.charging.settings.maximum_current._set_value(charging_settings['maxChargeCurrentAC_A'],  # pylint: disable=protected-access
-                                                                                 measured=captured_at)
-                        elif 'maxChargeCurrentAC' in charging_settings and charging_settings['maxChargeCurrentAC'] is not None:
-                            if isinstance(vehicle.charging.settings, VolkswagenCharging.Settings):
-                                vehicle.charging.settings.max_current_in_ampere = False
-                            else:
-                                raise ValueError('Charging settings not of type VolkswagenCharging.Settings')
-                            vehicle.charging.settings.maximum_current.minimum = 6.0
-                            vehicle.charging.settings.maximum_current.maximum = 16.0
-                            vehicle.charging.settings.maximum_current.precision = 1.0
-                            # pylint: disable-next=protected-access
-                            vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
-                            vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
-                            if charging_settings['maxChargeCurrentAC'] == 'maximum':
-                                vehicle.charging.settings.maximum_current._set_value(16.0,  # pylint: disable=protected-access
-                                                                                     measured=captured_at)
-                            elif charging_settings['maxChargeCurrentAC'] == 'reduced':
-                                vehicle.charging.settings.maximum_current._set_value(6.0,  # pylint: disable=protected-access
-                                                                                     measured=captured_at)
-                            else:
-                                LOG_API.info('Unknown max charge current %s', charging_settings['maxChargeCurrentAC'])
-                                vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        else:
-                            vehicle.charging.settings.maximum_current._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'autoUnlockPlugWhenChargedAC' in charging_settings and charging_settings['autoUnlockPlugWhenChargedAC'] is not None:
-                            # pylint: disable-next=protected-access
-                            vehicle.charging.settings.auto_unlock._add_on_set_hook(self.__on_charging_settings_change)
-                            vehicle.charging.settings.auto_unlock._is_changeable = True  # pylint: disable=protected-access
-                            if charging_settings['autoUnlockPlugWhenChargedAC'] == 'on':
-                                vehicle.charging.settings.auto_unlock._set_value(True,  # pylint: disable=protected-access
-                                                                                 measured=captured_at)
-                            elif charging_settings['autoUnlockPlugWhenChargedAC'] == 'off':
-                                vehicle.charging.settings.auto_unlock._set_value(False,  # pylint: disable=protected-access
-                                                                                 measured=captured_at)
-                            else:
-                                LOG_API.info('Unknown auto unlock plug when charged %s', charging_settings['autoUnlockPlugWhenChargedAC'])
-                                vehicle.charging.settings.auto_unlock._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        else:
+                            LOG_API.info('Unknown auto unlock plug when charged %s', charging_settings['autoUnlockPlugWhenCharged'])
                             vehicle.charging.settings.auto_unlock._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'targetSOC_pct' in charging_settings and charging_settings['targetSOC_pct'] is not None:
-                            vehicle.charging.settings.target_level.minimum = 50.0
-                            vehicle.charging.settings.target_level.maximum = 100.0
-                            vehicle.charging.settings.target_level.precision = 10.0
-                            # pylint: disable-next=protected-access
-                            vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_settings_change)
-                            vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
-                            vehicle.charging.settings.target_level._set_value(charging_settings['targetSOC_pct'],  # pylint: disable=protected-access
-                                                                              measured=captured_at)
-                        else:
-                            vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'chargingSettings', charging_settings, {'carCapturedTimestamp', 'maxChargeCurrentAC_A', 'maxChargeCurrentAC',
-                                                                                        'autoUnlockPlugWhenChargedAC', 'targetSOC_pct'})
+                    else:
+                        vehicle.charging.settings.auto_unlock._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    if 'targetSOCPercentage' in charging_settings and charging_settings['targetSOCPercentage'] is not None:
+                        vehicle.charging.settings.target_level.minimum = 50.0
+                        vehicle.charging.settings.target_level.maximum = 100.0
+                        vehicle.charging.settings.target_level.precision = 10.0
+                        # pylint: disable-next=protected-access
+                        vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_settings_change)
+                        vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
+                        vehicle.charging.settings.target_level._set_value(charging_settings['targetSOCPercentage'],  # pylint: disable=protected-access
+                                                                          measured=captured_at)
+                    else:
+                        vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
+                    log_extra_keys(LOG_API, 'chargingSettings', charging_settings, {'carCapturedTimestamp', 'maxChargingCurrent',
+                                                                                    'autoUnlockPlugWhenCharged', 'targetSOCPercentage'})
                 else:
                     vehicle.charging.settings.maximum_current._set_value(None)  # pylint: disable=protected-access
                     vehicle.charging.settings.auto_unlock._set_value(None)  # pylint: disable=protected-access
                     vehicle.charging.settings.target_level._set_value(None)  # pylint: disable=protected-access
-
-                if 'plugStatus' in data['charging'] and data['charging']['plugStatus'] is not None:
-                    if 'value' in data['charging']['plugStatus'] and data['charging']['plugStatus']['value'] is not None:
-                        plug_status = data['charging']['plugStatus']['value']
-                        if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
-                            raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = robust_time_parse(plug_status['carCapturedTimestamp'])
-                        if 'plugConnectionState' in plug_status and plug_status['plugConnectionState'] is not None:
-                            if plug_status['plugConnectionState'] in [item.value for item in ChargingConnector.ChargingConnectorConnectionState]:
-                                plug_state: ChargingConnector.ChargingConnectorConnectionState = \
-                                    ChargingConnector.ChargingConnectorConnectionState(plug_status['plugConnectionState'])
-                            else:
-                                LOG_API.info('Unknown plug connection state %s not in %s', plug_status['plugConnectionState'],
-                                             str(ChargingConnector.ChargingConnectorConnectionState))
-                                plug_state = ChargingConnector.ChargingConnectorConnectionState.UNKNOWN
-                            vehicle.charging.connector.connection_state._set_value(value=plug_state,  # pylint: disable=protected-access
-                                                                                   measured=captured_at)
+                if 'plugStatus' in charge_data and charge_data['plugStatus'] is not None:
+                    plug_status = charge_data['plugStatus']
+                    if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
+                        raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
+                    captured_at: datetime = datetime.utcfromtimestamp(plug_status['carCapturedTimestamp'] / 1000)
+                    if 'plugConnectionState' in plug_status and plug_status['plugConnectionState'] is not None:
+                        if plug_status['plugConnectionState'] in [item.value for item in ChargingConnector.ChargingConnectorConnectionState]:
+                            plug_state: ChargingConnector.ChargingConnectorConnectionState = \
+                                ChargingConnector.ChargingConnectorConnectionState(plug_status['plugConnectionState'])
                         else:
-                            vehicle.charging.connector.connection_state._set_value(None)  # pylint: disable=protected-access
-                        if 'plugLockState' in plug_status and plug_status['plugLockState'] is not None:
-                            if plug_status['plugLockState'] in [item.value for item in ChargingConnector.ChargingConnectorLockState]:
-                                plug_lock_state: ChargingConnector.ChargingConnectorLockState = \
-                                    ChargingConnector.ChargingConnectorLockState(plug_status['plugLockState'])
-                            else:
-                                LOG_API.info('Unknown plug lock state %s not in %s', plug_status['plugLockState'],
-                                             str(ChargingConnector.ChargingConnectorLockState))
-                                plug_lock_state = ChargingConnector.ChargingConnectorLockState.UNKNOWN
-                            vehicle.charging.connector.lock_state._set_value(value=plug_lock_state,  # pylint: disable=protected-access
+                            LOG_API.info('Unknown plug connection state %s not in %s', plug_status['plugConnectionState'],
+                                         str(ChargingConnector.ChargingConnectorConnectionState))
+                            plug_state = ChargingConnector.ChargingConnectorConnectionState.UNKNOWN
+                        vehicle.charging.connector.connection_state._set_value(value=plug_state,  # pylint: disable=protected-access
+                                                                               measured=captured_at)
+                    else:
+                        vehicle.charging.connector.connection_state._set_value(None)  # pylint: disable=protected-access
+                    if 'plugLockState' in plug_status and plug_status['plugLockState'] is not None:
+                        if plug_status['plugLockState'] in [item.value for item in ChargingConnector.ChargingConnectorLockState]:
+                            plug_lock_state: ChargingConnector.ChargingConnectorLockState = \
+                                ChargingConnector.ChargingConnectorLockState(plug_status['plugLockState'])
+                        else:
+                            LOG_API.info('Unknown plug lock state %s not in %s', plug_status['plugLockState'],
+                                         str(ChargingConnector.ChargingConnectorLockState))
+                            plug_lock_state = ChargingConnector.ChargingConnectorLockState.UNKNOWN
+                        vehicle.charging.connector.lock_state._set_value(value=plug_lock_state,  # pylint: disable=protected-access
+                                                                         measured=captured_at)
+                    else:
+                        vehicle.charging.connector.lock_state._set_value(None)  # pylint: disable=protected-access
+                    if 'infrastructureState' in plug_status and plug_status['infrastructureState'] is not None:
+                        if plug_status['infrastructureState'] in [item.value for item in ChargingConnector.ExternalPower]:
+                            external_power: ChargingConnector.ExternalPower = \
+                                ChargingConnector.ExternalPower(plug_status['infrastructureState'])
+                        else:
+                            LOG_API.info('Unknown external power %s not in %s', plug_status['infrastructureState'],
+                                         str(ChargingConnector.ExternalPower))
+                            external_power = ChargingConnector.ExternalPower.UNKNOWN
+                        vehicle.charging.connector.external_power._set_value(value=external_power,  # pylint: disable=protected-access
                                                                              measured=captured_at)
-                        else:
-                            vehicle.charging.connector.lock_state._set_value(None)  # pylint: disable=protected-access
-                        if 'externalPower' in plug_status and plug_status['externalPower'] is not None:
-                            if plug_status['externalPower'] in [item.value for item in ChargingConnector.ExternalPower]:
-                                external_power: ChargingConnector.ExternalPower = \
-                                    ChargingConnector.ExternalPower(plug_status['externalPower'])
-                            else:
-                                LOG_API.info('Unknown external power %s not in %s', plug_status['externalPower'],
-                                             str(ChargingConnector.ExternalPower))
-                                external_power = ChargingConnector.ExternalPower.UNKNOWN
-                            vehicle.charging.connector.external_power._set_value(value=external_power,  # pylint: disable=protected-access
-                                                                                 measured=captured_at)
-                        else:
-                            vehicle.charging.connector.external_power._set_value(None)  # pylint: disable=protected-access
-                        log_extra_keys(LOG_API, 'plugStatus', plug_status, {'carCapturedTimestamp', 'plugConnectionState', 'plugLockState', 'externalPower'})
+                    else:
+                        vehicle.charging.connector.external_power._set_value(None)  # pylint: disable=protected-access
+                    log_extra_keys(LOG_API, 'plugStatus', plug_status, {'carCapturedTimestamp', 'plugConnectionState', 'plugLockState', 'infrastructureState'})
+
+
             if 'vehicleHealthInspection' in data and data['vehicleHealthInspection'] is not None:
                 if 'maintenanceStatus' in data['vehicleHealthInspection'] and data['vehicleHealthInspection']['maintenanceStatus'] is not None:
                     if 'value' in data['vehicleHealthInspection']['maintenanceStatus'] \
@@ -1468,12 +1285,12 @@ class Connector(BaseConnector):
             log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection',
                                                               'charging', 'readiness'})
 
-    def fetch_parking_position(self, vehicle: VolkswagenVehicle) -> None:
+    def fetch_parking_position(self, vehicle: VolkswagenNAVehicle) -> None:
         """
         Fetches the parking position of the given Volkswagen vehicle and updates the vehicle's position attributes.
 
         Args:
-            vehicle (VolkswagenVehicle): The Volkswagen vehicle object whose parking position is to be fetched.
+            vehicle (VolkswagenNAVehicle): The Volkswagen vehicle object whose parking position is to be fetched.
 
         Raises:
             ValueError: If the vehicle's VIN is None.
@@ -1578,10 +1395,10 @@ class Connector(BaseConnector):
         """
         if attribute.parent is None or not isinstance(attribute.parent, VolkswagenClimatization.Settings) \
                 or attribute.parent.parent is None \
-                or attribute.parent.parent.parent is None or not isinstance(attribute.parent.parent.parent, VolkswagenVehicle):
+                or attribute.parent.parent.parent is None or not isinstance(attribute.parent.parent.parent, VolkswagenNAVehicle):
             raise SetterError('Object hierarchy is not as expected')
         settings: VolkswagenClimatization.Settings = attribute.parent
-        vehicle: VolkswagenVehicle = attribute.parent.parent.parent
+        vehicle: VolkswagenNAVehicle = attribute.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise SetterError('VIN in object hierarchy missing')
@@ -1650,11 +1467,11 @@ class Connector(BaseConnector):
     def __on_air_conditioning_start_stop(self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
         if start_stop_command.parent is None or start_stop_command.parent.parent is None \
-                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenVehicle):
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenNAVehicle):
             raise CommandError('Object hierarchy is not as expected')
         if not isinstance(command_arguments, dict):
             raise CommandError('Command arguments are not a dictionary')
-        vehicle: VolkswagenVehicle = start_stop_command.parent.parent.parent
+        vehicle: VolkswagenNAVehicle = start_stop_command.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise CommandError('VIN in object hierarchy missing')
@@ -1880,16 +1697,27 @@ class Connector(BaseConnector):
                 raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
             command_dict['spin'] = self.active_config['spin']
         if command_arguments['command'] == SpinCommand.Command.VERIFY:
-            url = 'https://emea.bff.cariad.digital/vehicle/v1/spin/verify'
+            challenge_url = self.base_url + f'/ss/v1/user/{self.session.user_id}/challenge'
+            verify_url = self.base_url + f'/ss/v1/user/${self.session.user_id}/vehicle/{command_arguments["vehicle_id"]}/session'
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
         try:
-            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-            if command_response.status_code != requests.codes['no_content']:
-                LOG.error('Could not execute spin command (%s: %s)', command_response.status_code, command_response.text)
-                raise CommandError(f'Could not execute spin command ({command_response.status_code}: {command_response.text})')
+            challenge_response: requests.Response = self.session.get(challenge_url)
+            challenge_string = challenge_response.json().data.challenge
+            verify_string = challenge_string + '.' + command_dict['spin']
+            verify_hash = hashlib.sha512(verify_string.encode('ascii')).digest().decode('ascii')
+            print('SPIN verify hash: ', verify_hash)
+            verify_data = {
+                    'idToken': self.session.id_token,
+                    'spinHash': verify_hash,
+            }
+            verify_response: requests.Response = self.session.post(verify_url, data=json.dumps(verify_data), allow_redirects=True)
+            if verify_response.status_code != request.codes['ok']:
+                LOG.error('Could not execute spin verify (%s: %s)', verify_response.status_code, verify_response.text)
+                raise CommandError(f'Could not execute spin verify ({command_response.status_code}: {command_response.text})')
             else:
                 LOG.info('Spin verify command executed successfully')
+                self.session.token['access_token'] = verify_response.json()['carnetVehicleToken']
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
                                ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
@@ -1904,11 +1732,11 @@ class Connector(BaseConnector):
     def __on_charging_start_stop(self, start_stop_command: ChargingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
         if start_stop_command.parent is None or start_stop_command.parent.parent is None \
-                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenVehicle):
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenNAVehicle):
             raise CommandError('Object hierarchy is not as expected')
         if not isinstance(command_arguments, dict):
             raise CommandError('Command arguments are not a dictionary')
-        vehicle: VolkswagenVehicle = start_stop_command.parent.parent.parent
+        vehicle: VolkswagenNAVehicle = start_stop_command.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise CommandError('VIN in object hierarchy missing')
@@ -1942,12 +1770,12 @@ class Connector(BaseConnector):
         """
         Callback for the charging setting change.
         """
-        if attribute.parent is None or not isinstance(attribute.parent, VolkswagenCharging.Settings) \
+        if attribute.parent is None or not isinstance(attribute.parent, VolkswagenNACharging.Settings) \
                 or attribute.parent.parent is None \
-                or attribute.parent.parent.parent is None or not isinstance(attribute.parent.parent.parent, VolkswagenVehicle):
+                or attribute.parent.parent.parent is None or not isinstance(attribute.parent.parent.parent, VolkswagenNAVehicle):
             raise SetterError('Object hierarchy is not as expected')
-        settings: VolkswagenCharging.Settings = attribute.parent
-        vehicle: VolkswagenVehicle = attribute.parent.parent.parent
+        settings: VolkswagenNACharging.Settings = attribute.parent
+        vehicle: VolkswagenNAVehicle = attribute.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise SetterError('VIN in object hierarchy missing')
@@ -2024,11 +1852,11 @@ class Connector(BaseConnector):
     def __on_window_heating_start_stop(self, start_stop_command: WindowHeatingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
         if start_stop_command.parent is None or start_stop_command.parent.parent is None \
-                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenVehicle):
+                or start_stop_command.parent.parent.parent is None or not isinstance(start_stop_command.parent.parent.parent, VolkswagenNAVehicle):
             raise CommandError('Object hierarchy is not as expected')
         if not isinstance(command_arguments, dict):
             raise CommandError('Command arguments are not a dictionary')
-        vehicle: VolkswagenVehicle = start_stop_command.parent.parent.parent
+        vehicle: VolkswagenNAVehicle = start_stop_command.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise CommandError('VIN in object hierarchy missing')

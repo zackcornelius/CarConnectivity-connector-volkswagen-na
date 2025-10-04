@@ -6,18 +6,20 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "carconnectivity-connector-volkswagen"
-description = "CarConnectivity connector for Volkswagen services"
+name = "carconnectivity-connector-volkswagen-na"
+description = "CarConnectivity connector for Volkswagen NA services"
 dynamic = ["version"]
 requires-python = ">=3.9"
 authors = [
-    { name = "Till Steinbach" }
+    { name = "Till Steinbach" },
+    { name = "Zack Cornelius" }
 ]
 dependencies = [
     "carconnectivity>=0.8",
     "oauthlib~=3.3.1",
     "requests~=2.32.3",
-    "pyjwt~=2.10"
+    "pyjwt~=2.10",
+    "pkce~=1.0.3",
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -36,7 +38,7 @@ classifiers = [
 [project.urls]
 
 [tool.setuptools_scm]
-write_to = "src/carconnectivity_connectors/volkswagen/_version.py"
+write_to = "src/carconnectivity_connectors/volkswagen_na/_version.py"
 
 [tool.pylint.format]
 max-line-length=160

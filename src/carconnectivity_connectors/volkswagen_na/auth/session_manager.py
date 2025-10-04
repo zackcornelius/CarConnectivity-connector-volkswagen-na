@@ -8,6 +8,7 @@ import hashlib
 
 import logging
 
+from carconnectivity_connectors.volkswagen.auth.myvw_session import MyVWSession
 from carconnectivity_connectors.volkswagen.auth.we_connect_session import WeConnectSession
 
 if TYPE_CHECKING:
@@ -47,11 +48,13 @@ class Service(Enum):
 
     Attributes:
         WE_CONNECT (str): Represents the 'WeConnect' service.
+        MY_VW (str): Represents the MyVW service
 
     Methods:
         __str__() -> str: Returns the string representation of the service.
     """
     WE_CONNECT = 'WeConnect'
+    MY_VW = 'MyVW'
 
     def __str__(self) -> str:
         return self.value
@@ -128,6 +131,8 @@ class SessionManager():
 
         if service == Service.WE_CONNECT:
             session = WeConnectSession(session_user=session_user, token=token, metadata=metadata, cache=cache)
+        elif service == Service.MY_VW:
+            session = MyVWSession(session_user=session_user, token=token, metadata=metadata, cache=cache)
         else:
             raise ValueError(f"Unsupported service: {service}")
 

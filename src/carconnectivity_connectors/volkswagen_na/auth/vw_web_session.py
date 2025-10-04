@@ -80,34 +80,49 @@ class VWWebSession(OpenIDSession):
         """
         # Get the login form
         email_form: HTMLFormParser = self._get_login_form(url)
+        print('Email Form', email_form.data)
+
+        parsed_url = urlparse(url)
 
         # Set email to the provided username
         email_form.data['email'] = self.session_user.username
 
+        target_base_url = parsed_url.scheme + '://' + parsed_url.netloc
+
+        if parsed_url.netloc == 'identity.na.vwgroup.io':
+            email_form.target = f'/signin-service/v1/b680e751-7e1f-4008-8ec1-3a528183d215@apps_vw-dilab_com/login/identifier'
+            pass
+
         # Get password form
         password_form = self._get_password_form(
-            urljoin('https://identity.vwgroup.io', email_form.target),
+            urljoin(target_base_url, email_form.target),
             email_form.data
         )
+
+        print('Password form', password_form.data)
 
         # Set credentials
         password_form.data['email'] = self.session_user.username
         password_form.data['password'] = self.session_user.password
 
+        password_form_target_url = f'https://identity.vwgroup.io/signin-service/v1/{self.client_id}/{password_form.target}'
+        if parsed_url.netloc == 'identity.na.vwgroup.io':
+            password_form_target_url = 'https://identity.na.vwgroup.io/signin-service/v1/b680e751-7e1f-4008-8ec1-3a528183d215@apps_vw-dilab_com/login/authenticate'
+
+
+        print('Password form target', password_form_target_url)
         # Log in and get the redirect URL
-        url = self._handle_login(
-            f'https://identity.vwgroup.io/signin-service/v1/{self.client_id}/{password_form.target}',
-            password_form.data
-        )
+        url = self._handle_login(password_form_target_url, password_form.data)
 
         if self.redirect_uri is None:
             raise ValueError('Redirect URI is not set')
         # Check URL for terms and conditions
         while True:
             if url.startswith(self.redirect_uri):
+                print('Found redirect uri: ' + url)
                 break
 
-            url = urljoin('https://identity.vwgroup.io', url)
+            url = urljoin(parsed_url.scheme + '://' + parsed_url.netloc, url)
 
             if 'terms-and-conditions' in url:
                 if self.accept_terms_on_login:
@@ -121,13 +136,16 @@ class VWWebSession(OpenIDSession):
                 raise RetrievalError('Temporary server error during login')
 
             if 'Location' not in response.headers:
+                print('Location not in response headers')
+                print('Body: ', response.content)
                 if 'consent' in url:
                     raise AuthenticationError('Could not find Location in headers, probably due to missing consent. Try visiting: ' + url)
                 raise APICompatibilityError('Forwarding without Location in headers')
 
+            print('New location: ' + url)
             url = response.headers['Location']
 
-        return url.replace(self.redirect_uri + '#', 'https://egal?')
+        return url.replace(self.redirect_uri + '#', 'https://egal?').replace(self.redirect_uri + '?', 'https://egal?')
 
     def _get_login_form(self, url: str) -> HTMLFormParser:
         while True:
@@ -155,6 +173,7 @@ class VWWebSession(OpenIDSession):
         return email_form
 
     def _get_password_form(self, url: str, data: Dict[str, Any]) -> CredentialsFormParser:
+        print('Getting password form', data)
         response = self.websession.post(url, data=data, allow_redirects=True)
         if response.status_code != requests.codes['ok']:
             raise APICompatibilityError(f'Retrieving credentials page was not successful, '

@@ -15,9 +15,9 @@ if TYPE_CHECKING:
     from carconnectivity.objects import GenericObject
 
 
-class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attributes
+class VolkswagenNACharging(Charging):  # pylint: disable=too-many-instance-attributes
     """
-    VolkswagenCharging class for handling Volkswagen vehicle charging information.
+    VolkswagenNACharging class for handling Volkswagen vehicle charging information.
 
     This class extends the Charging class and includes an enumeration of various
     charging states specific to Volkswagen vehicles.
@@ -25,10 +25,10 @@ class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attribu
     def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Charging] = None) -> None:
         if origin is not None:
             super().__init__(vehicle=vehicle, origin=origin)
-            self.settings = VolkswagenCharging.Settings(parent=self, origin=origin.settings)
+            self.settings = VolkswagenNACharging.Settings(parent=self, origin=origin.settings)
         else:
             super().__init__(vehicle=vehicle)
-            self.settings = VolkswagenCharging.Settings(parent=self, origin=self.settings)
+            self.settings = VolkswagenNACharging.Settings(parent=self, origin=self.settings)
 
     class Settings(Charging.Settings):
         """
@@ -51,7 +51,7 @@ class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attribu
         CONSERVATION = 'conservation'
         CHARGE_PURPOSE_REACHED_NOT_CONSERVATION_CHARGING = 'chargePurposeReachedAndNotConservationCharging'
         CHARGE_PURPOSE_REACHED_CONSERVATION = 'chargePurposeReachedAndConservation'
-        CHARGING = 'charging'
+        CHARGING = 'chargingHVBattery'
         ERROR = 'error'
         UNSUPPORTED = 'unsupported'
         DISCHARGING = 'discharging'
@@ -74,16 +74,16 @@ class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attribu
 
 
 # Mapping of Volkswagen charging states to generic charging states
-mapping_volskwagen_charging_state: Dict[VolkswagenCharging.VolkswagenChargingState, Charging.ChargingState] = {
-    VolkswagenCharging.VolkswagenChargingState.OFF: Charging.ChargingState.OFF,
-    VolkswagenCharging.VolkswagenChargingState.NOT_READY_FOR_CHARGING: Charging.ChargingState.OFF,
-    VolkswagenCharging.VolkswagenChargingState.READY_FOR_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
-    VolkswagenCharging.VolkswagenChargingState.CONSERVATION: Charging.ChargingState.CONSERVATION,
-    VolkswagenCharging.VolkswagenChargingState.CHARGE_PURPOSE_REACHED_NOT_CONSERVATION_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
-    VolkswagenCharging.VolkswagenChargingState.CHARGE_PURPOSE_REACHED_CONSERVATION: Charging.ChargingState.CONSERVATION,
-    VolkswagenCharging.VolkswagenChargingState.CHARGING: Charging.ChargingState.CHARGING,
-    VolkswagenCharging.VolkswagenChargingState.ERROR: Charging.ChargingState.ERROR,
-    VolkswagenCharging.VolkswagenChargingState.UNSUPPORTED: Charging.ChargingState.UNSUPPORTED,
-    VolkswagenCharging.VolkswagenChargingState.DISCHARGING: Charging.ChargingState.DISCHARGING,
-    VolkswagenCharging.VolkswagenChargingState.UNKNOWN: Charging.ChargingState.UNKNOWN
+mapping_volskwagen_charging_state: Dict[VolkswagenNACharging.VolkswagenChargingState, Charging.ChargingState] = {
+    VolkswagenNACharging.VolkswagenChargingState.OFF: Charging.ChargingState.OFF,
+    VolkswagenNACharging.VolkswagenChargingState.NOT_READY_FOR_CHARGING: Charging.ChargingState.OFF,
+    VolkswagenNACharging.VolkswagenChargingState.READY_FOR_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
+    VolkswagenNACharging.VolkswagenChargingState.CONSERVATION: Charging.ChargingState.CONSERVATION,
+    VolkswagenNACharging.VolkswagenChargingState.CHARGE_PURPOSE_REACHED_NOT_CONSERVATION_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
+    VolkswagenNACharging.VolkswagenChargingState.CHARGE_PURPOSE_REACHED_CONSERVATION: Charging.ChargingState.CONSERVATION,
+    VolkswagenNACharging.VolkswagenChargingState.CHARGING: Charging.ChargingState.CHARGING,
+    VolkswagenNACharging.VolkswagenChargingState.ERROR: Charging.ChargingState.ERROR,
+    VolkswagenNACharging.VolkswagenChargingState.UNSUPPORTED: Charging.ChargingState.UNSUPPORTED,
+    VolkswagenNACharging.VolkswagenChargingState.DISCHARGING: Charging.ChargingState.DISCHARGING,
+    VolkswagenNACharging.VolkswagenChargingState.UNKNOWN: Charging.ChargingState.UNKNOWN
 }

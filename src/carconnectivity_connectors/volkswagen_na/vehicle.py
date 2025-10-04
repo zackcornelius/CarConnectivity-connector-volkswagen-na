@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionVehicle, HybridVehicle
+from carconnectivity.attributes import StringAttribute
 from carconnectivity.attributes import BooleanAttribute
 
 from carconnectivity_connectors.volkswagen.capability import Capabilities
 from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
-from carconnectivity_connectors.volkswagen.charging import VolkswagenCharging
+from carconnectivity_connectors.volkswagen.charging import VolkswagenNACharging
 
 SUPPORT_IMAGES = False
 try:
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from carconnectivity_connectors.base.connector import BaseConnector
 
 
-class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attributes
+class VolkswagenNAVehicle(GenericVehicle):  # pylint: disable=too-many-instance-attributes
     """
     A class to represent a generic volkswagen vehicle.
 
@@ -41,6 +42,8 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
             self.capabilities.parent = self
             self.is_active: BooleanAttribute = origin.is_active
             self.is_active.parent = self
+            self.uuid: StringAttribute = origin.uuid
+            self.uuid.parent = self
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
         else:
@@ -48,12 +51,13 @@ class VolkswagenVehicle(GenericVehicle):  # pylint: disable=too-many-instance-at
             self.capabilities: Capabilities = Capabilities(vehicle=self)
             self.climatization = VolkswagenClimatization(vehicle=self, origin=self.climatization)
             self.is_active = BooleanAttribute(name='is_active', parent=self, tags={'connector_custom'})
+            self.uuid = StringAttribute('uuid', self, tags={'connector_custom'})
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access
 
 
-class VolkswagenElectricVehicle(ElectricVehicle, VolkswagenVehicle):
+class VolkswagenNAElectricVehicle(ElectricVehicle, VolkswagenNAVehicle):
     """
     Represents a Volkswagen electric vehicle.
     """
@@ -62,15 +66,15 @@ class VolkswagenElectricVehicle(ElectricVehicle, VolkswagenVehicle):
         if origin is not None:
             super().__init__(garage=garage, origin=origin)
             if isinstance(origin, ElectricVehicle):
-                self.charging = VolkswagenCharging(vehicle=self, origin=origin.charging)
+                self.charging = VolkswagenNACharging(vehicle=self, origin=origin.charging)
             else:
-                self.charging = VolkswagenCharging(vehicle=self, origin=self.charging)
+                self.charging = VolkswagenNACharging(vehicle=self, origin=self.charging)
         else:
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
-            self.charging = VolkswagenCharging(vehicle=self, origin=self.charging)
+            self.charging = VolkswagenNACharging(vehicle=self, origin=self.charging)
 
 
-class VolkswagenCombustionVehicle(CombustionVehicle, VolkswagenVehicle):
+class VolkswagenNACombustionVehicle(CombustionVehicle, VolkswagenNAVehicle):
     """
     Represents a Volkswagen combustion vehicle.
     """
@@ -82,7 +86,7 @@ class VolkswagenCombustionVehicle(CombustionVehicle, VolkswagenVehicle):
             super().__init__(vin=vin, garage=garage, managing_connector=managing_connector)
 
 
-class VolkswagenHybridVehicle(HybridVehicle, VolkswagenElectricVehicle, VolkswagenCombustionVehicle):
+class VolkswagenNAHybridVehicle(HybridVehicle, VolkswagenNAElectricVehicle, VolkswagenNACombustionVehicle):
     """
     Represents a Volkswagen hybrid vehicle.
     """
