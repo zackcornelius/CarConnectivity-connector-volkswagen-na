@@ -8,12 +8,12 @@ import hashlib
 
 import logging
 
-from carconnectivity_connectors.volkswagen.auth.myvw_session import MyVWSession
-from carconnectivity_connectors.volkswagen.auth.we_connect_session import WeConnectSession
+from carconnectivity_connectors.volkswagen_na.auth.myvw_session import MyVWSession
+from carconnectivity_connectors.volkswagen_na.auth.we_connect_session import WeConnectSession
 
 if TYPE_CHECKING:
     from typing import Dict, Any
-    from carconnectivity_connectors.volkswagen.auth.vw_web_session import VWWebSession
+    from carconnectivity_connectors.volkswagen_na.auth.vw_web_session import VWWebSession
 
 LOG = logging.getLogger("carconnectivity.connectors.volkswagen.auth")
 

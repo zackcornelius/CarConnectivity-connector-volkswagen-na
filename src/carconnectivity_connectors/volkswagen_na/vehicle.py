@@ -6,9 +6,9 @@ from carconnectivity.vehicle import GenericVehicle, ElectricVehicle, CombustionV
 from carconnectivity.attributes import StringAttribute
 from carconnectivity.attributes import BooleanAttribute
 
-from carconnectivity_connectors.volkswagen.capability import Capabilities
-from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
-from carconnectivity_connectors.volkswagen.charging import VolkswagenNACharging
+from carconnectivity_connectors.volkswagen_na.capability import Capabilities
+from carconnectivity_connectors.volkswagen_na.climatization import VolkswagenClimatization
+from carconnectivity_connectors.volkswagen_na.charging import VolkswagenNACharging
 
 SUPPORT_IMAGES = False
 try:
@@ -44,6 +44,8 @@ class VolkswagenNAVehicle(GenericVehicle):  # pylint: disable=too-many-instance-
             self.is_active.parent = self
             self.uuid: StringAttribute = origin.uuid
             self.uuid.parent = self
+            self.spin_token = origin.spin_token
+            self.spin_token.parent = self
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
         else:
@@ -52,6 +54,7 @@ class VolkswagenNAVehicle(GenericVehicle):  # pylint: disable=too-many-instance-
             self.climatization = VolkswagenClimatization(vehicle=self, origin=self.climatization)
             self.is_active = BooleanAttribute(name='is_active', parent=self, tags={'connector_custom'})
             self.uuid = StringAttribute('uuid', self, tags={'connector_custom'})
+            self.spin_token = StringAttribute('spin_token', self, tags={'connector_custom'})
             if SUPPORT_IMAGES:
                 self._car_images: Dict[str, Image.Image] = {}
         self.manufacturer._set_value(value='Volkswagen')  # pylint: disable=protected-access

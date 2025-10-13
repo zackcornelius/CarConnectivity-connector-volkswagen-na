@@ -6,7 +6,6 @@
                 "type": "volkswagen_na",
                 "disabled": false,
                 "config": {
-		    "type": "na",
                     "log_level": "debug",
                     "api_log_level": "debug",
                     "interval": 180

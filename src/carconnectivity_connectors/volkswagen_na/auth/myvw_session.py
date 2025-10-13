@@ -21,8 +21,8 @@ from oauthlib.oauth2 import is_secure_transport
 
 from carconnectivity.errors import AuthenticationError, RetrievalError, TemporaryAuthenticationError
 
-from carconnectivity_connectors.volkswagen.auth.openid_session import AccessType
-from carconnectivity_connectors.volkswagen.auth.vw_web_session import VWWebSession
+from carconnectivity_connectors.volkswagen_na.auth.openid_session import AccessType
+from carconnectivity_connectors.volkswagen_na.auth.vw_web_session import VWWebSession
 
 if TYPE_CHECKING:
     from typing import Tuple, Dict

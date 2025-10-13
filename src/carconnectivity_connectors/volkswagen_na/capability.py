@@ -9,7 +9,7 @@ from carconnectivity.attributes import StringAttribute, BooleanAttribute, DateAt
 
 if TYPE_CHECKING:
     from typing import Dict, Optional
-    from carconnectivity_connectors.volkswagen.vehicle import VolkswagenVehicle
+    from carconnectivity_connectors.volkswagen_na.vehicle import VolkswagenVehicle
 
 
 class Capabilities(GenericObject):
@@ -142,3 +142,4 @@ class Capability(GenericObject):
         LIMITED_FEATURE = 3005
         AUTH_APP_CERT_ERROR = 3006
         STATUS_UNSUPPORTED = 4001
+        NOT_AVAILABLE = 4002

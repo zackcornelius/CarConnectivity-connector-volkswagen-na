@@ -11,6 +11,7 @@ import logging
 import netrc
 from datetime import datetime, timezone, timedelta
 import requests
+import hashlib
 
 from carconnectivity.garage import Garage
 from carconnectivity.errors import AuthenticationError, TooManyRequestsError, RetrievalError, APIError, APICompatibilityError, \
@@ -37,16 +38,16 @@ from carconnectivity.enums import ConnectionState
 from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
-from carconnectivity_connectors.volkswagen.auth.session_manager import SessionManager, SessionUser, Service
-from carconnectivity_connectors.volkswagen.auth.we_connect_session import WeConnectSession
-from carconnectivity_connectors.volkswagen.auth.myvw_session import MyVWSession
-from carconnectivity_connectors.volkswagen.vehicle import VolkswagenNAVehicle, VolkswagenNAElectricVehicle, VolkswagenNACombustionVehicle, \
+from carconnectivity_connectors.volkswagen_na.auth.session_manager import SessionManager, SessionUser, Service
+from carconnectivity_connectors.volkswagen_na.auth.we_connect_session import WeConnectSession
+from carconnectivity_connectors.volkswagen_na.auth.myvw_session import MyVWSession
+from carconnectivity_connectors.volkswagen_na.vehicle import VolkswagenNAVehicle, VolkswagenNAElectricVehicle, VolkswagenNACombustionVehicle, \
     VolkswagenNAHybridVehicle
-from carconnectivity_connectors.volkswagen.climatization import VolkswagenClimatization
-from carconnectivity_connectors.volkswagen.capability import Capability
-from carconnectivity_connectors.volkswagen._version import __version__
-from carconnectivity_connectors.volkswagen.command_impl import SpinCommand
-from carconnectivity_connectors.volkswagen.charging import VolkswagenNACharging, mapping_volskwagen_charging_state
+from carconnectivity_connectors.volkswagen_na.climatization import VolkswagenClimatization
+from carconnectivity_connectors.volkswagen_na.capability import Capability
+from carconnectivity_connectors.volkswagen_na._version import __version__
+from carconnectivity_connectors.volkswagen_na.command_impl import SpinCommand
+from carconnectivity_connectors.volkswagen_na.charging import VolkswagenNACharging, mapping_volskwagen_charging_state
 
 SUPPORT_IMAGES = False
 try:
@@ -145,25 +146,14 @@ class Connector(BaseConnector):
             raise AuthenticationError('Username or password not provided')
 
         self._manager: SessionManager = SessionManager(tokenstore=car_connectivity.get_tokenstore(), cache=car_connectivity.get_cache())
-        if ('type' in config and config['type'] == 'na'):
-            session: requests.Session = self._manager.get_session(Service.MY_VW, SessionUser(username=self.active_config['username'],
-                                                                                             password=self.active_config['password']))
-            if not isinstance(session, MyVWSession):
-                raise AuthenticationError('Could not create session')
-            self.session: MyVWSession = session
-            self.base_url = "https://b-h-s.spr.us00.p.con-veh.net"
-            self.session.retries = 3
-            self.session.timeout = 180
-        else:
-            session: requests.Session = self._manager.get_session(Service.WE_CONNECT, SessionUser(username=self.active_config['username'],
-                                                                                                  password=self.active_config['password']))
-            if not isinstance(session, WeConnectSession):
-                raise AuthenticationError('Could not create session')
-            self.session: WeConnectSession = session
-            self.base_url = 'https://emea.bff.cariad.digital'
-            self.session.retries = 3
-            self.session.timeout = 180
-            self.session.refresh()
+        session: requests.Session = self._manager.get_session(Service.MY_VW, SessionUser(username=self.active_config['username'],
+                                                                                            password=self.active_config['password']))
+        if not isinstance(session, MyVWSession):
+            raise AuthenticationError('Could not create session')
+        self.session: MyVWSession = session
+        self.base_url = "https://b-h-s.spr.us00.p.con-veh.net"
+        self.session.retries = 3
+        self.session.timeout = 180
 
         self._elapsed: List[timedelta] = []
 
@@ -261,12 +251,6 @@ class Connector(BaseConnector):
 
         This method calls the `fetch_vehicles` method to retrieve vehicle data.
         """
-        # Add spin command
-        if self.commands is not None and not self.commands.contains_command('spin'):
-            spin_command = SpinCommand(parent=self.commands)
-            spin_command._add_on_set_hook(self.__on_spin)  # pylint: disable=protected-access
-            spin_command.enabled = True
-            self.commands.add_command(spin_command)
         self.fetch_vehicles()
         self.car_connectivity.transaction_end()
 
@@ -288,9 +272,6 @@ class Connector(BaseConnector):
             if vehicle_to_update is not None and isinstance(vehicle_to_update, VolkswagenNAVehicle) and vehicle_to_update.is_managed_by_connector(self):
                 self.fetch_vehicle_status(vehicle_to_update)
 
-                capability_parking_position: Optional[Capability] = vehicle_to_update.capabilities.get_capability('parkingPosition')
-                if capability_parking_position is not None and capability_parking_position.enabled and len(capability_parking_position.status.value) == 0:
-                    self.fetch_parking_position(vehicle_to_update)
                 self.decide_state(vehicle_to_update)
 
     def fetch_vehicles(self) -> None:
@@ -334,61 +315,44 @@ class Connector(BaseConnector):
                             vehicle.model._set_value(vehicle_dict['modelName'])  # pylint: disable=protected-access
                         else:
                             vehicle.model._set_value(None)  # pylint: disable=protected-access
+                        
+                        rrs_url = self.base_url + f'/rrs/v1/privileges/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}'
+                        rrs_data = self.session.get(rrs_url)
+                        #rrs_data = self._fetch_data(rrs_url, session=self.session)
 
-                        if 'capabilities' in vehicle_dict and vehicle_dict['capabilities'] is not None:
+                        if 'data' in rrs_data and rrs_data['data'] is not None and 'services' in rrs_data['data'] and rrs_data['data']['services'] is not None:
+                            services = rrs_data['data']['services']
                             found_capabilities = set()
-                            for capability_dict in vehicle_dict['capabilities']:
-                                if 'id' in capability_dict and capability_dict['id'] is not None:
-                                    capability_id = capability_dict['id']
-                                    found_capabilities.add(capability_id)
-                                    if vehicle.capabilities.has_capability(capability_id):
-                                        capability: Capability = vehicle.capabilities.get_capability(capability_id)  # pyright: ignore[reportAssignmentType]
-                                    else:
-                                        capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
-                                        vehicle.capabilities.add_capability(capability_id, capability)
-                                    if 'expirationDate' in capability_dict and capability_dict['expirationDate'] is not None:
-                                        expiration_date: datetime = robust_time_parse(capability_dict['expirationDate'])
-                                        capability.expiration_date._set_value(expiration_date)  # pylint: disable=protected-access
-                                    else:
-                                        capability.expiration_date._set_value(None)  # pylint: disable=protected-access
-                                    if 'userDisablingAllowed' in capability_dict and capability_dict['userDisablingAllowed'] is not None:
-                                        # pylint: disable-next=protected-access
-                                        capability.user_disabling_allowed._set_value(capability_dict['userDisablingAllowed'])
-                                    else:
-                                        capability.user_disabling_allowed._set_value(None)  # pylint: disable=protected-access
-                                    if 'status' in capability_dict and capability_dict['status'] is not None:
-                                        statuses = capability_dict['status']
-                                        if isinstance(statuses, list):
-                                            for status in statuses:
-                                                if status in [item.value for item in Capability.Status]:
-                                                    capability.status.value.append(Capability.Status(status))
-                                                else:
-                                                    LOG_API.warning('Capability status unkown %s', status)
-                                                    capability.status.value.append(Capability.Status.UNKNOWN)
+                            for service_dict in services:
+                                if 'longCode' in service_dict and service_dict['longCode'] is not None:
+                                    service_id = service_dict['longCode']
+                                    for operation in service_dict.get('operations', []):
+                                        capability_id = service_id + ':' + operation['longCode']
+                                        found_capabilities.add(capability_id)
+                                        if vehicle.capabilities.has_capability(capability_id):
+                                            capability: Capability = vehicle.capabilities.get_capability(capability_id)
                                         else:
-                                            LOG_API.warning('Capability status not a list in %s', statuses)
-                                    else:
-                                        capability.status.value.clear()
-                                    log_extra_keys(LOG_API, 'capability', capability_dict, {'id', 'expirationDate', 'userDisablingAllowed', 'status'})
-                                else:
-                                    raise APIError('Could not fetch capabilities, capability ID missing')
+                                            capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
+                                            vehicle.capabilities.add_capability(capability_id, capability)
+                                        if 'capabilityStatus' in service_dict and service_dict['capabilityStatus'] is not None:
+                                            status = service_dict['capabilityStatus']
+                                            if status in [item.value for item in Capability.Status]:
+                                                capability.status.value = [Capability.Status(status)]
+                                            elif status == 'AVAILABLE':
+                                                pass # No status
+                                            else:
+                                                LOG_API.warning('Capability status unkown %s', status)
+                                                capability.status.value = [Capability.Status.UNKNOWN]
+
+                                        log_extra_keys(LOG_API, 'service.operation', operation, {'longCode', 'shortCode', 'capabilityStatus', 'subscriptionStatus', 'privilege', 'playProtection'})
                             for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
                                 vehicle.capabilities.remove_capability(capability_id)
                         else:
                             vehicle.capabilities.clear_capabilities()
 
-                        capability_wakeup: Optional[Capability] = vehicle.capabilities.get_capability('vehicleWakeUpTrigger')
-                        if capability_wakeup is not None and capability_wakeup.enabled and len(capability_wakeup.status.value) == 0:
-                            if vehicle.commands is not None and vehicle.commands.commands is not None \
-                                    and not vehicle.commands.contains_command('wake-sleep'):
-                                wake_sleep_command = WakeSleepCommand(parent=vehicle.commands)
-                                wake_sleep_command._add_on_set_hook(self.__on_wake_sleep)  # pylint: disable=protected-access
-                                wake_sleep_command.enabled = True
-                                vehicle.commands.add_command(wake_sleep_command)
-
                         # Add honkAndFlash command if necessary capabilities are available
-                        capability_honk_and_flash: Optional[Capability] = vehicle.capabilities.get_capability('honkAndFlash')
-                        if capability_honk_and_flash is not None and capability_honk_and_flash.enabled and len(capability_honk_and_flash.status.value) == 0:
+                        has_honk_and_flash: bool = vehicle.capabilities.has_capability('HonkAndFlash:ALL', check_status_ok=True)
+                        if has_honk_and_flash:
                             if vehicle.commands is not None and vehicle.commands.commands is not None \
                                     and not vehicle.commands.contains_command('honk-flash'):
                                 honk_flash_command = HonkAndFlashCommand(parent=vehicle.commands, with_duration=True)
@@ -397,8 +361,8 @@ class Connector(BaseConnector):
                                 vehicle.commands.add_command(honk_flash_command)
 
                         # Add lock and unlock command
-                        capability_access: Optional[Capability] = vehicle.capabilities.get_capability('access')
-                        if capability_access is not None and capability_access.enabled and len(capability_access.status.value) == 0:
+                        has_capability_access = vehicle.capabilities.has_capability('LockAndUnlock:ALL', check_status_ok=True)
+                        if has_capability_access:
                             if vehicle.doors is not None and vehicle.doors.commands is not None and vehicle.doors.commands.commands is not None \
                                     and not vehicle.doors.commands.contains_command('lock-unlock'):
                                 lock_unlock_command = LockUnlockCommand(parent=vehicle.doors.commands)
@@ -494,34 +458,6 @@ class Connector(BaseConnector):
         vin = vehicle.vin.value
         if vin is None:
             raise ValueError('vehicle.vin cannot be None')
-        known_capabilities: list[str] = ['access',
-                                         'activeventilation',
-                                         'automation',
-                                         'auxiliaryheating',
-                                         'userCapabilities',
-                                         'charging',
-                                         'chargingProfiles',
-                                         'batteryChargingCare',
-                                         'climatisation',
-                                         'climatisationTimers',
-                                         'departureTimers',
-                                         'fuelStatus',
-                                         'vehicleLights',
-                                         'lvBattery',
-                                         'readiness',
-                                         'vehicleHealthInspection',
-                                         'vehicleHealthWarnings',
-                                         'oilLevel',
-                                         'measurements',
-                                         'batterySupport']
-        jobs: list[str] = []
-        for capability_id in known_capabilities:
-            capability: Optional[Capability] = vehicle.capabilities.get_capability(capability_id)
-            if capability is not None and capability.enabled and len(capability.status.value) == 0:
-                jobs.append(capability_id)
-        if len(jobs) == 0:
-            LOG.warning('No capabilities enabled for vehicle %s', vin)
-            #return
 
         print('Fetching data for vin', vehicle.vin)
 
@@ -592,12 +528,51 @@ class Connector(BaseConnector):
 
 
             if 'currentMileage' in data and data['currentMileage'] is not None:
+                LOG.debug('+===== Setting Odometer to %s km', data['currentMileage'])
                 # pylint: disable-next=protected-access
-                vehicle.odometer._set_value(value=data['currentMileage'], measured=captured_at, unit=Length.KM)
+                vehicle.odometer._set_value(value=float(data['currentMileage']), measured=captured_at, unit=Length.KM)
                 vehicle.odometer.precision = 1
             else:
                 # pylint: disable-next=protected-access
                 vehicle.odometer._set_value(None, measured=captured_at)
+
+            if 'location' in data and data['location'] is not None:
+                if 'timestamp' not in data['location'] or data['location']['timestamp'] is None:
+                    raise APIError('Could not fetch vehicle status, timestmap missing')
+                captured_at: datetime = datetime.utcfromtimestamp(data['location']['timestamp'] / 1000)
+
+                if 'latitude' in data['location'] and data['location']['latitude'] is not None and 'longitude' in data['location'] and data['location']['longitude'] is not None:
+                    vehicle.position.latitude._set_value(data['location']['latitude'], measured=captured_at)  # pylint: disable=protected-access
+                    vehicle.position.latitude.precision = 0.000001
+                    vehicle.position.longitude._set_value(data['location']['longitude'], measured=captured_at)  # pylint: disable=protected-access
+                    vehicle.position.longitude.precision = 0.000001
+                    vehicle.position.position_type._set_value(Position.PositionType.PARKING, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    LOG.debug('Unable to find valid location data in response', data)
+                    vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                    vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                    vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+            elif 'lastParkedLocation' in data and data['lastParkedLocation'] is not None:
+                if 'timestamp' not in data['lastParkedLocation'] or data['lastParkedLocation']['timestamp'] is None:
+                    raise APIError('Could not fetch vehicle status, timestmap missing')
+                captured_at: datetime = datetime.utcfromtimestamp(data['lastParkedLocation']['timestamp'] / 1000)
+
+                if 'latitude' in data['lastParkedLocation'] and data['lastParkedLocation']['latitude'] is not None and 'longitude' in data['lastParkedLocation'] and data['lastParkedLocation']['longitude'] is not None:
+                    vehicle.position.latitude._set_value(data['lastParkedLocation']['latitude'], measured=captured_at)  # pylint: disable=protected-access
+                    vehicle.position.latitude.precision = 0.000001
+                    vehicle.position.longitude._set_value(data['lastParkedLocation']['longitude'], measured=captured_at)  # pylint: disable=protected-access
+                    vehicle.position.longitude.precision = 0.000001
+                    vehicle.position.position_type._set_value(Position.PositionType.PARKING, measured=captured_at)  # pylint: disable=protected-access
+                else:
+                    LOG.debug('Unable to find valid location data in response', data)
+                    vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                    vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                    vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+            else:
+                vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
+                vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
+                vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+
 
             if 'measurements' in data and data['measurements'] is not None:
                 if 'temperatureOutsideStatus' in data['measurements'] and data['measurements']['temperatureOutsideStatus'] is not None:
@@ -659,7 +634,7 @@ class Connector(BaseConnector):
                     if 'doorStatusTimestmap' in exteriorStatus['doorStatus']:
                         captured_at = datetime.utcfromtimestamp(exteriorStatus['doorStatus']['doorStatusTimestamp'] / 1000)
                     for door_id, door_status in exteriorStatus['doorStatus'].items():
-                        if door_status == 'NOTAVAILABLE' or door_id == 'doorStatusTimestmap':
+                        if door_status == 'NOTAVAILABLE' or door_id == 'doorStatusTimestamp':
                             continue
                         seen_door_ids.add(door_id)
                         if door_id in vehicle.doors.doors:
@@ -1164,7 +1139,7 @@ class Connector(BaseConnector):
                         # pylint: disable-next=protected-access
                         vehicle.charging.settings.target_level._add_on_set_hook(self.__on_charging_settings_change)
                         vehicle.charging.settings.target_level._is_changeable = True  # pylint: disable=protected-access
-                        vehicle.charging.settings.target_level._set_value(charging_settings['targetSOCPercentage'],  # pylint: disable=protected-access
+                        vehicle.charging.settings.target_level._set_value(float(charging_settings['targetSOCPercentage']),  # pylint: disable=protected-access
                                                                           measured=captured_at)
                     else:
                         vehicle.charging.settings.target_level._set_value(None, measured=captured_at)  # pylint: disable=protected-access
@@ -1285,47 +1260,6 @@ class Connector(BaseConnector):
             log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection',
                                                               'charging', 'readiness'})
 
-    def fetch_parking_position(self, vehicle: VolkswagenNAVehicle) -> None:
-        """
-        Fetches the parking position of the given Volkswagen vehicle and updates the vehicle's position attributes.
-
-        Args:
-            vehicle (VolkswagenNAVehicle): The Volkswagen vehicle object whose parking position is to be fetched.
-
-        Raises:
-            ValueError: If the vehicle's VIN is None.
-            APIError: If the fetched data does not contain 'carCapturedTimestamp' or it is None.
-
-        Updates:
-            vehicle.position.latitude: The latitude of the vehicle's parking position.
-            vehicle.position.longitude: The longitude of the vehicle's parking position.
-        """
-        vin = vehicle.vin.value
-        if vin is None:
-            raise ValueError('vehicle.vin cannot be None')
-        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/parkingposition'
-        data: Dict[str, Any] | None = self._fetch_data(url, self.session, allow_empty=True, allow_http_error=True, 
-                                                       allowed_errors=[requests.codes['not_found']])
-        if data is not None and 'data' in data and data['data'] is not None:
-            if 'carCapturedTimestamp' not in data['data'] or data['data']['carCapturedTimestamp'] is None:
-                raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-            captured_at: datetime = robust_time_parse(data['data']['carCapturedTimestamp'])
-
-            if 'lat' in data['data'] and data['data']['lat'] is not None and 'lon' in data['data'] and data['data']['lon'] is not None:
-                vehicle.position.latitude._set_value(data['data']['lat'], measured=captured_at)  # pylint: disable=protected-access
-                vehicle.position.latitude.precision = 0.000001
-                vehicle.position.longitude._set_value(data['data']['lon'], measured=captured_at)  # pylint: disable=protected-access
-                vehicle.position.longitude.precision = 0.000001
-                vehicle.position.position_type._set_value(Position.PositionType.PARKING, measured=captured_at)  # pylint: disable=protected-access
-            else:
-                vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
-                vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
-                vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
-        else:
-            vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
-            vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
-            vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
-
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
         Records the elapsed time.
@@ -1335,7 +1269,7 @@ class Connector(BaseConnector):
         """
         self._elapsed.append(elapsed)
 
-    def _fetch_data(self, url, session, force=False, allow_empty=False, allow_http_error=False, allowed_errors=None) -> Optional[Dict[str, Any]]:  # noqa: C901
+    def _fetch_data(self, url, session, force=False, allow_empty=False, allow_http_error=False, allowed_errors=None, token=None) -> Optional[Dict[str, Any]]:  # noqa: C901
         data: Optional[Dict[str, Any]] = None
         cache_date: Optional[datetime] = None
         if not force and (self.active_config['max_age'] is not None and session.cache is not None and url in session.cache):
@@ -1344,7 +1278,7 @@ class Connector(BaseConnector):
         if data is None or self.active_config['max_age'] is None \
                 or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age']))):
             try:
-                status_response: requests.Response = session.get(url, allow_redirects=False)
+                status_response: requests.Response = session.get(url, allow_redirects=False, token=token)
                 self._record_elapsed(status_response.elapsed)
                 if status_response.status_code in (requests.codes['ok'], requests.codes['multiple_status']):
                     data = status_response.json()
@@ -1358,7 +1292,7 @@ class Connector(BaseConnector):
                 elif status_response.status_code == requests.codes['unauthorized']:
                     LOG.info('Server asks for new authorization')
                     session.login()
-                    status_response = session.get(url, allow_redirects=False)
+                    status_response = session.get(url, allow_redirects=False, token=token)
 
                     if status_response.status_code in (requests.codes['ok'], requests.codes['multiple_status']):
                         data = status_response.json()
@@ -1400,58 +1334,65 @@ class Connector(BaseConnector):
         settings: VolkswagenClimatization.Settings = attribute.parent
         vehicle: VolkswagenNAVehicle = attribute.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
+        vuuid: Optional[str] = vehicle.uuid
         if vin is None:
             raise SetterError('VIN in object hierarchy missing')
-        setting_dict = {}
+        if vuuid is None:
+            raise CommandError('UUID in object hierarchy missing')
+        setting_dict = { "climatizationElementSettings": {}, "targetTemperature": {} }
         if settings.target_temperature.enabled and settings.target_temperature.value is not None:
             # Round target temperature to nearest 0.5
             # Check if the attribute changed is the target_temperature attribute
             precision: float = settings.target_temperature.precision if settings.target_temperature.precision is not None else 0.5
             if isinstance(attribute, TemperatureAttribute) and attribute.id == 'target_temperature':
                 value = round(value / precision) * precision
-                setting_dict['targetTemperature'] = value
+                setting_dict['targetTemperature']['temperature'] = value
             else:
-                setting_dict['targetTemperature'] = round(settings.target_temperature.value / precision) * precision
+                setting_dict['targetTemperature']['temperature'] = round(settings.target_temperature.value / precision) * precision
+            setting_dict['targetTemperature']['measurementState'] = 'valid'
             if settings.unit_in_car == Temperature.C:
-                setting_dict['targetTemperatureUnit'] = 'celsius'
+                setting_dict['targetTemperature']['unit'] = 'celsius'
+            elif settings.unit_in_car == Temperature.F:
+                setting_dict['targetTemperature']['unit'] = 'fahrenheit'
             elif settings.target_temperature.unit == Temperature.F:
-                setting_dict['targetTemperatureUnit'] = 'farenheit'
+                setting_dict['targetTemperature']['unit'] = 'fahrenheit'
             else:
-                setting_dict['targetTemperatureUnit'] = 'celsius'
+                setting_dict['targetTemperature']['unit'] = 'celsius'
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'climatisation_without_external_power':
             setting_dict['climatisationWithoutExternalPower'] = value
         elif settings.climatization_without_external_power.enabled and settings.climatization_without_external_power.value is not None:
             setting_dict['climatisationWithoutExternalPower'] = settings.climatization_without_external_power.value
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'climatization_at_unlock':
-            setting_dict['climatizationAtUnlock'] = value
+            setting_dict['climatizationElementSettings']['climatizationAtUnlock'] = value
         elif settings.climatization_at_unlock.enabled and settings.climatization_at_unlock.value is not None:
-            setting_dict['climatizationAtUnlock'] = settings.climatization_at_unlock.value
+            setting_dict['climatizationElementSettings']['climatizationAtUnlock'] = settings.climatization_at_unlock.value
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'window_heating':
-            setting_dict['windowHeatingEnabled'] = value
+            setting_dict['climatizationElementSettings']['windowHeatingEnabled'] = value
         elif settings.window_heating.enabled and settings.window_heating.value is not None:
-            setting_dict['windowHeatingEnabled'] = settings.window_heating.value
+            setting_dict['climatizationElementSettings']['windowHeatingEnabled'] = settings.window_heating.value
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'front_zone_left_enabled':
-            setting_dict['zoneFrontLeftEnabled'] = value
+            setting_dict['climatizationElementSettings']['zoneFrontLeftEnabled'] = value
         elif settings.front_zone_left_enabled.enabled and settings.front_zone_left_enabled.value is not None:
-            setting_dict['zoneFrontLeftEnabled'] = settings.front_zone_left_enabled.value
+            setting_dict['climatizationElementSettings']['zoneFrontLeftEnabled'] = settings.front_zone_left_enabled.value
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'front_zone_right_enabled':
-            setting_dict['zoneFrontRightEnabled'] = value
+            setting_dict['climatizationElementSettings']['zoneFrontRightEnabled'] = value
         elif settings.front_zone_right_enabled.enabled and settings.front_zone_right_enabled.value is not None:
-            setting_dict['zoneFrontRightEnabled'] = settings.front_zone_right_enabled.value
+            setting_dict['climatizationElementSettings']['zoneFrontRightEnabled'] = settings.front_zone_right_enabled.value
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'rear_zone_left_enabled':
-            setting_dict['zoneRearLeftEnabled'] = value
+            setting_dict['climatizationElementSettings']['zoneRearLeftEnabled'] = value
         elif settings.rear_zone_left_enabled.enabled and settings.rear_zone_left_enabled.value is not None:
-            setting_dict['zoneRearLeftEnabled'] = settings.rear_zone_left_enabled.value
+            setting_dict['climatizationElementSettings']['zoneRearLeftEnabled'] = settings.rear_zone_left_enabled.value
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'rear_zone_right_enabled':
-            setting_dict['zoneRearRightEnabled'] = value
+            setting_dict['climatizationElementSettings']['zoneRearRightEnabled'] = value
         elif settings.rear_zone_right_enabled.enabled and settings.rear_zone_right_enabled.value is not None:
-            setting_dict['zoneRearRightEnabled'] = settings.rear_zone_right_enabled.value
+            setting_dict['climatizationElementSettings']['zoneRearRightEnabled'] = settings.rear_zone_right_enabled.value
 
-        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/climatisation/settings'
+        url: str = self.base_url + f'/ev/v1/vehicle/{vuuid}/pretripclimate/settings?tempUnit={setting_dict['targetTemperature']['unit']}'
         try:
+            LOG.debug('Setting climatization settings for vehicle %s to %s', vin, str(setting_dict))
             settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
             if settings_response.status_code != requests.codes['ok']:
-                LOG.error('Could not set climatization settings (%s)', settings_response.status_code)
+                LOG.error('Could not set climatization settings (%s): %s', settings_response.status_code, settings_response.text)
                 raise SetterError(f'Could not set value ({settings_response.status_code})')
         except requests.exceptions.ConnectionError as connection_error:
             raise SetterError(f'Connection error: {connection_error}.'
@@ -1473,74 +1414,25 @@ class Connector(BaseConnector):
             raise CommandError('Command arguments are not a dictionary')
         vehicle: VolkswagenNAVehicle = start_stop_command.parent.parent.parent
         vin: Optional[str] = vehicle.vin.value
+        vuuid: Optional[str] = vehicle.uuid
         if vin is None:
             raise CommandError('VIN in object hierarchy missing')
+        if vuuid is None:
+            raise CommandError('UUID in object hierarchy missing')
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
         command_dict = {}
         command_str: Optional[str] = None
         if command_arguments['command'] == ClimatizationStartStopCommand.Command.START:
             command_str = 'start'
-            if vehicle.climatization.settings is None:
-                raise CommandError('Could not control climatisation, there are no climatisation settings for the vehicle available.')
-            precision: float = 0.5
-            if 'target_temperature' in command_arguments:
-                # Round target temperature to nearest 0.5
-                command_dict['targetTemperature'] = round(command_arguments['target_temperature'] / precision) * precision
-            elif vehicle.climatization.settings.target_temperature is not None and vehicle.climatization.settings.target_temperature.enabled \
-                    and vehicle.climatization.settings.target_temperature.value is not None:
-                if vehicle.climatization.settings.target_temperature.precision is not None:
-                    precision: float = vehicle.climatization.settings.target_temperature.precision
-                if isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
-                        and vehicle.climatization.settings.unit_in_car is not None:
-                    temperature_value: Optional[float] = vehicle.climatization.settings.target_temperature.temperature_in(
-                        vehicle.climatization.settings.unit_in_car)
-                else:
-                    temperature_value = vehicle.climatization.settings.target_temperature.value
-                if temperature_value is not None:
-                    command_dict['targetTemperature'] = round(temperature_value / precision) * precision
-            if 'target_temperature_unit' in command_arguments:
-                if command_arguments['target_temperature_unit'] == Temperature.C:
-                    command_dict['targetTemperatureUnit'] = 'celsius'
-                elif command_arguments['target_temperature_unit'] == Temperature.F:
-                    command_dict['targetTemperatureUnit'] = 'farenheit'
-                else:
-                    command_dict['targetTemperatureUnit'] = 'celsius'
-            elif isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
-                    and vehicle.climatization.settings.unit_in_car == Temperature.C:
-                command_dict['targetTemperatureUnit'] = 'celsius'
-            elif isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings) \
-                    and vehicle.climatization.settings.unit_in_car == Temperature.F:
-                command_dict['targetTemperatureUnit'] = 'farenheit'
-            else:
-                command_dict['targetTemperatureUnit'] = 'celsius'
-
-            if vehicle.climatization.settings.climatization_without_external_power is not None \
-                    and vehicle.climatization.settings.climatization_without_external_power.enabled:
-                command_dict['climatisationWithoutExternalPower'] = vehicle.climatization.settings.climatization_without_external_power.value
-            if vehicle.climatization.settings.window_heating is not None and vehicle.climatization.settings.window_heating.enabled:
-                command_dict['windowHeatingEnabled'] = vehicle.climatization.settings.window_heating.value
-            if vehicle.climatization.settings.climatization_at_unlock is not None and vehicle.climatization.settings.climatization_at_unlock.enabled:
-                command_dict['climatizationAtUnlock'] = vehicle.climatization.settings.climatization_at_unlock.value
-            if isinstance(vehicle.climatization.settings, VolkswagenClimatization.Settings):
-                if vehicle.climatization.settings.front_zone_left_enabled is not None and vehicle.climatization.settings.front_zone_left_enabled.enabled:
-                    command_dict['zoneFrontLeftEnabled'] = vehicle.climatization.settings.front_zone_left_enabled.value
-                if vehicle.climatization.settings.front_zone_right_enabled is not None and vehicle.climatization.settings.front_zone_right_enabled.enabled:
-                    command_dict['zoneFrontRightEnabled'] = vehicle.climatization.settings.front_zone_right_enabled.value
-                if vehicle.climatization.settings.rear_zone_left_enabled is not None and vehicle.climatization.settings.rear_zone_left_enabled.enabled:
-                    command_dict['zoneRearLeftEnabled'] = vehicle.climatization.settings.rear_zone_left_enabled.value
-                if vehicle.climatization.settings.rear_zone_right_enabled is not None and vehicle.climatization.settings.rear_zone_right_enabled.enabled:
-                    command_dict['zoneRearRightEnabled'] = vehicle.climatization.settings.rear_zone_right_enabled.value
-            if vehicle.climatization.settings.heater_source is not None and vehicle.climatization.settings.heater_source.enabled:
-                command_dict['heaterSource'] = vehicle.climatization.settings.heater_source.value
         elif command_arguments['command'] == ClimatizationStartStopCommand.Command.STOP:
             command_str = 'stop'
         else:
             raise CommandError(f'Unknown command {command_arguments["command"]}')
 
-        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/climatisation/{command_str}'
+        url: str = self.base_url + f'/ev/v1/vehicle/{vuuid}/pretripclimate/{command_str}'
         try:
-            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
+            command_response: requests.Response = self.session.post(url, allow_redirects=True)
             if command_response.status_code != requests.codes['ok']:
                 LOG.error('Could not start/stop air conditioning (%s: %s)', command_response.status_code, command_response.text)
                 raise CommandError(f'Could not start/stop air conditioning ({command_response.status_code}: {command_response.text})')
@@ -1553,42 +1445,6 @@ class Connector(BaseConnector):
             raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
         except requests.exceptions.RetryError as retry_error:
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
-        return command_arguments
-
-    def __on_wake_sleep(self, wake_sleep_command: WakeSleepCommand, command_arguments: Union[str, Dict[str, Any]]) \
-            -> Union[str, Dict[str, Any]]:
-        if wake_sleep_command.parent is None or wake_sleep_command.parent.parent is None \
-                or not isinstance(wake_sleep_command.parent.parent, GenericVehicle):
-            raise CommandError('Object hierarchy is not as expected')
-        if not isinstance(command_arguments, dict):
-            raise CommandError('Command arguments are not a dictionary')
-        vehicle: GenericVehicle = wake_sleep_command.parent.parent
-        vin: Optional[str] = vehicle.vin.value
-        if vin is None:
-            raise CommandError('VIN in object hierarchy missing')
-        if 'command' not in command_arguments:
-            raise CommandError('Command argument missing')
-        if command_arguments['command'] == WakeSleepCommand.Command.WAKE:
-            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/vehiclewakeuptrigger'
-
-            try:
-                command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
-                if command_response.status_code not in (requests.codes['ok'], requests.codes['no_content']):
-                    LOG.error('Could not execute wake command (%s: %s)', command_response.status_code, command_response.text)
-                    raise CommandError(f'Could not execute wake command ({command_response.status_code}: {command_response.text})')
-            except requests.exceptions.ConnectionError as connection_error:
-                raise CommandError(f'Connection error: {connection_error}.'
-                                   ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
-            except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
-                raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
-            except requests.exceptions.ReadTimeout as timeout_error:
-                raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
-            except requests.exceptions.RetryError as retry_error:
-                raise CommandError(f'Retrying failed: {retry_error}') from retry_error
-        elif command_arguments['command'] == WakeSleepCommand.Command.SLEEP:
-            raise CommandError('Sleep command not supported by vehicle. Vehicle will put itself to sleep')
-        else:
-            raise CommandError(f'Unknown command {command_arguments["command"]}')
         return command_arguments
 
     def __on_honk_flash(self, honk_flash_command: HonkAndFlashCommand, command_arguments: Union[str, Dict[str, Any]]) \
@@ -1680,44 +1536,37 @@ class Connector(BaseConnector):
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
         return command_arguments
 
-    def __on_spin(self, spin_command: SpinCommand, command_arguments: Union[str, Dict[str, Any]]) \
-            -> Union[str, Dict[str, Any]]:
-        del spin_command
-        if not isinstance(command_arguments, dict):
-            raise CommandError('Command arguments are not a dictionary')
-        if 'command' not in command_arguments:
-            raise CommandError('Command argument missing')
+    def __do_spin(self, vehicle: VolkswagenNAVehicle, spin: str | None = None) -> None:
+        if not isinstance(vehicle, VolkswagenNAVehicle):
+            raise CommandError('Object is not a VolkswagenNAVehicle')
         command_dict = {}
-        if self.active_config['spin'] is None:
-            raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-        if 'spin' in command_arguments:
-            command_dict['spin'] = command_arguments['spin']
-        else:
+        if spin is None:
             if self.active_config['spin'] is None or self.active_config['spin'] == '':
                 raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-            command_dict['spin'] = self.active_config['spin']
-        if command_arguments['command'] == SpinCommand.Command.VERIFY:
-            challenge_url = self.base_url + f'/ss/v1/user/{self.session.user_id}/challenge'
-            verify_url = self.base_url + f'/ss/v1/user/${self.session.user_id}/vehicle/{command_arguments["vehicle_id"]}/session'
-        else:
-            raise CommandError(f'Unknown command {command_arguments["command"]}')
+            spin = self.active_config['spin']
+        challenge_url = self.base_url + f'/ss/v1/user/{self.session.user_id}/challenge'
+        verify_url = self.base_url + f'/ss/v1/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}/session'
         try:
             challenge_response: requests.Response = self.session.get(challenge_url)
-            challenge_string = challenge_response.json().data.challenge
-            verify_string = challenge_string + '.' + command_dict['spin']
-            verify_hash = hashlib.sha512(verify_string.encode('ascii')).digest().decode('ascii')
-            print('SPIN verify hash: ', verify_hash)
+            challenge_response_data = challenge_response.json()
+            challenge_string = challenge_response_data['data']['challenge']
+            if (challenge_response_data['data']['remainingTries'] < 3):
+                raise CommandError(f'Skipping SPIN token fetching, only {challenge_response_data["data"]["remainingTries"]} tries remaining')
+            verify_string = challenge_string + '.' + spin
+            verify_hash = hashlib.sha512(verify_string.encode('ascii')).hexdigest()
             verify_data = {
                     'idToken': self.session.id_token,
                     'spinHash': verify_hash,
+                    'tsp': 'WCT'
             }
-            verify_response: requests.Response = self.session.post(verify_url, data=json.dumps(verify_data), allow_redirects=True)
-            if verify_response.status_code != request.codes['ok']:
+            verify_response: requests.Response = self.session.post(verify_url, data=json.dumps(verify_data), allow_redirects=True, token=self.session.id_token)
+            if verify_response.status_code != requests.codes['ok']:
                 LOG.error('Could not execute spin verify (%s: %s)', verify_response.status_code, verify_response.text)
-                raise CommandError(f'Could not execute spin verify ({command_response.status_code}: {command_response.text})')
+                raise CommandError(f'Could not execute spin verify ({verify_response.status_code}: {verify_response.text})')
             else:
                 LOG.info('Spin verify command executed successfully')
-                self.session.token['access_token'] = verify_response.json()['carnetVehicleToken']
+                vehicle.spin_token._set_value(verify_response.json()['data']['carnetVehicleToken'])
+                return
         except requests.exceptions.ConnectionError as connection_error:
             raise CommandError(f'Connection error: {connection_error}.'
                                ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
@@ -1727,7 +1576,6 @@ class Connector(BaseConnector):
             raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
         except requests.exceptions.RetryError as retry_error:
             raise CommandError(f'Retrying failed: {retry_error}') from retry_error
-        return command_arguments
 
     def __on_charging_start_stop(self, start_stop_command: ChargingStartStopCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
@@ -1737,17 +1585,20 @@ class Connector(BaseConnector):
         if not isinstance(command_arguments, dict):
             raise CommandError('Command arguments are not a dictionary')
         vehicle: VolkswagenNAVehicle = start_stop_command.parent.parent.parent
-        vin: Optional[str] = vehicle.vin.value
-        if vin is None:
-            raise CommandError('VIN in object hierarchy missing')
+        vuuid: Optional[str] = vehicle.uuid.value
+        if vuuid is None:
+            raise CommandError('VUUID in object hierarchy missing')
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
         try:
             if command_arguments['command'] == ChargingStartStopCommand.Command.START:
-                url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/start'
-                command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
+                url = self.base_url + f'/ev/v1/vehicle/{vuuid}/charging/start'
+                charging_request = {
+                    'actionMode': 'immediate'
+                }
+                command_response: requests.Response = self.session.post(url, data=json.dumps(charging_request), allow_redirects=True)
             elif command_arguments['command'] == ChargingStartStopCommand.Command.STOP:
-                url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/stop'
+                url = self.base_url + f'/ev/v1/vehicle/{vuuid}/charging/stop'
                 command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
             else:
                 raise CommandError(f'Unknown command {command_arguments["command"]}')
@@ -1779,6 +1630,9 @@ class Connector(BaseConnector):
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise SetterError('VIN in object hierarchy missing')
+        vuuid: Optional[str] = vehicle.uuid.value
+        if vuuid is None:
+            raise SetterError('UUID in object hierarchy missing')
         setting_dict = {}
         precision: float = settings.maximum_current.precision if settings.maximum_current.precision is not None else 1.0
         if isinstance(attribute, CurrentAttribute) and attribute.id == 'maximum_current':
