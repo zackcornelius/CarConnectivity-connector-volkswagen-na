@@ -39,7 +39,6 @@ from carconnectivity.window_heating import WindowHeatings
 
 from carconnectivity_connectors.base.connector import BaseConnector
 from carconnectivity_connectors.volkswagen_na.auth.session_manager import SessionManager, SessionUser, Service
-from carconnectivity_connectors.volkswagen_na.auth.we_connect_session import WeConnectSession
 from carconnectivity_connectors.volkswagen_na.auth.myvw_session import MyVWSession
 from carconnectivity_connectors.volkswagen_na.vehicle import VolkswagenNAVehicle, VolkswagenNAElectricVehicle, VolkswagenNACombustionVehicle, \
     VolkswagenNAHybridVehicle
@@ -1106,7 +1105,7 @@ class Connector(BaseConnector):
                     captured_at: datetime = datetime.fromtimestamp((charging_settings['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                     if 'maxChargingCurrent' in charging_settings and charging_settings['maxChargingCurrent'] is not None:
                         if isinstance(vehicle.charging.settings, VolkswagenNACharging.Settings):
-                            vehicle.charging.settings.max_current_in_ampere = True
+                            vehicle.charging.settings.max_current_in_ampere = False
                         else:
                             raise ValueError('Charging settings not of type VolkswagenNACharging.Settings')
 
@@ -1455,92 +1454,13 @@ class Connector(BaseConnector):
 
     def __on_honk_flash(self, honk_flash_command: HonkAndFlashCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
-        if honk_flash_command.parent is None or honk_flash_command.parent.parent is None \
-                or not isinstance(honk_flash_command.parent.parent, GenericVehicle):
-            raise CommandError('Object hierarchy is not as expected')
-        if not isinstance(command_arguments, dict):
-            raise CommandError('Command arguments are not a dictionary')
-        vehicle: GenericVehicle = honk_flash_command.parent.parent
-        vin: Optional[str] = vehicle.vin.value
-        if vin is None:
-            raise CommandError('VIN in object hierarchy missing')
-        if 'command' not in command_arguments:
-            raise CommandError('Command argument missing')
-        command_dict = {}
-        if command_arguments['command'] in [HonkAndFlashCommand.Command.FLASH, HonkAndFlashCommand.Command.HONK_AND_FLASH]:
-            if 'duration' in command_arguments:
-                command_dict['duration_s'] = command_arguments['duration']
-            else:
-                command_dict['duration_s'] = 10
-            command_dict['mode'] = command_arguments['command'].value
-            command_dict['userPosition'] = {}
-            if vehicle.position is None or vehicle.position.latitude is None or vehicle.position.longitude is None \
-                    or vehicle.position.latitude.value is None or vehicle.position.longitude.value is None \
-                    or not vehicle.position.latitude.enabled or not vehicle.position.longitude.enabled:
-                raise CommandError('Can only execute honk and flash commands if vehicle position is known')
-            command_dict['userPosition']['latitude'] = vehicle.position.latitude.value
-            command_dict['userPosition']['longitude'] = vehicle.position.longitude.value
-
-            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/honkandflash'
-            try:
-                command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-                if command_response.status_code not in (requests.codes['ok'], requests.codes['no_content']):
-                    LOG.error('Could not execute honk or flash command (%s: %s)', command_response.status_code, command_response.text)
-                    raise CommandError(f'Could not execute honk or flash command ({command_response.status_code}: {command_response.text})')
-            except requests.exceptions.ConnectionError as connection_error:
-                raise CommandError(f'Connection error: {connection_error}.'
-                                   ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
-            except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
-                raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
-            except requests.exceptions.ReadTimeout as timeout_error:
-                raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
-            except requests.exceptions.RetryError as retry_error:
-                raise CommandError(f'Retrying failed: {retry_error}') from retry_error
-            else:
-                raise CommandError(f'Unknown command {command_arguments["command"]}')
-        return command_arguments
+        # Honk and Flash doesn't work with 2020-2024 id.4's. I don't have another car to test with
+        raise CommandError('HonkAndFlash not implemented')
 
     def __on_lock_unlock(self, lock_unlock_command: LockUnlockCommand, command_arguments: Union[str, Dict[str, Any]]) \
             -> Union[str, Dict[str, Any]]:
-        if lock_unlock_command.parent is None or lock_unlock_command.parent.parent is None \
-                or lock_unlock_command.parent.parent.parent is None or not isinstance(lock_unlock_command.parent.parent.parent, GenericVehicle):
-            raise CommandError('Object hierarchy is not as expected')
-        if not isinstance(command_arguments, dict):
-            raise SetterError('Command arguments are not a dictionary')
-        vehicle: GenericVehicle = lock_unlock_command.parent.parent.parent
-        vin: Optional[str] = vehicle.vin.value
-        if vin is None:
-            raise CommandError('VIN in object hierarchy missing')
-        if 'command' not in command_arguments:
-            raise CommandError('Command argument missing')
-        command_dict = {}
-        if 'spin' in command_arguments:
-            command_dict['spin'] = command_arguments['spin']
-        else:
-            if self.active_config['spin'] is None:
-                raise CommandError('S-PIN is missing, please add S-PIN to your configuration or .netrc file')
-            command_dict['spin'] = self.active_config['spin']
-        if command_arguments['command'] == LockUnlockCommand.Command.LOCK:
-            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/access/lock'
-        elif command_arguments['command'] == LockUnlockCommand.Command.UNLOCK:
-            url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/access/unlock'
-        else:
-            raise CommandError(f'Unknown command {command_arguments["command"]}')
-        try:
-            command_response: requests.Response = self.session.post(url, data=json.dumps(command_dict), allow_redirects=True)
-            if command_response.status_code != requests.codes['ok']:
-                LOG.error('Could not execute locking command (%s: %s)', command_response.status_code, command_response.text)
-                raise CommandError(f'Could not execute locking command ({command_response.status_code}: {command_response.text})')
-        except requests.exceptions.ConnectionError as connection_error:
-            raise CommandError(f'Connection error: {connection_error}.'
-                               ' If this happens frequently, please check if other applications communicate with the Volkswagen server.') from connection_error
-        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
-            raise CommandError(f'Error: {chunked_encoding_error}') from chunked_encoding_error
-        except requests.exceptions.ReadTimeout as timeout_error:
-            raise CommandError(f'Timeout during read: {timeout_error}') from timeout_error
-        except requests.exceptions.RetryError as retry_error:
-            raise CommandError(f'Retrying failed: {retry_error}') from retry_error
-        return command_arguments
+        # Lock and Unlock doesn't work with 2020-2024 id.4's. I don't have another car to test with
+        raise CommandError('LockUnlock not implemented')
 
     def __do_spin(self, vehicle: VolkswagenNAVehicle, spin: str | None = None) -> None:
         if not isinstance(vehicle, VolkswagenNAVehicle):
@@ -1643,56 +1563,33 @@ class Connector(BaseConnector):
         precision: float = settings.maximum_current.precision if settings.maximum_current.precision is not None else 1.0
         if isinstance(attribute, CurrentAttribute) and attribute.id == 'maximum_current':
             value = round(value / precision) * precision
-            if settings.max_current_in_ampere:
-                if value < 5.0:
-                    raise SetterError('Maximum current must be greater than 5 amps')
-                if value < 10.0:
-                    setting_dict['maxChargeCurrentAC_A'] = 5
-                    value = 5.0
-                elif value < 13.0:
-                    setting_dict['maxChargeCurrentAC_A'] = 10
-                    value = 10.0
-                elif value < 32.0:
-                    setting_dict['maxChargeCurrentAC_A'] = 13
-                    value = 13.0
-                elif value == 32.0:
-                    setting_dict['maxChargeCurrentAC_A'] = 32
-                    value = 32.0
-                else:
-                    raise SetterError('Maximum current must be less than 32 amps')
-            else:
-                if value < 6:
-                    raise SetterError('Maximum current must be greater than 6 amps')
-                if value < 16:
-                    setting_dict['maxChargeCurrentAC'] = 'reduced'
+                if value < 12:
+                    setting_dict['maxChargingCurrent'] = 'reduced'
                     value = 6.0
                 else:
-                    setting_dict['maxChargeCurrentAC'] = 'maximum'
-                    value = 16.0
+                    setting_dict['maxChargingCurrent'] = 'maximum'
+                    value = 32.0
         elif settings.maximum_current.enabled and settings.maximum_current.value is not None:
-            if settings.max_current_in_ampere:
-                setting_dict['maxChargeCurrentAC_A'] = round(settings.maximum_current.value / precision) * precision
+            if settings.maximum_current.value < 6:
+                raise SetterError('Maximum current must be greater than 6 amps')
+            if settings.maximum_current.value < 12:
+                setting_dict['maxChargingCurrent'] = 'reduced'
+                settings.maximum_current.value = 6.0
             else:
-                if settings.maximum_current.value < 6:
-                    raise SetterError('Maximum current must be greater than 6 amps')
-                if settings.maximum_current.value < 16:
-                    setting_dict['maxChargeCurrentAC'] = 'reduced'
-                    settings.maximum_current.value = 6.0
-                else:
-                    setting_dict['maxChargeCurrentAC'] = 'maximum'
-                    settings.maximum_current.value = 16.0
+                setting_dict['maxChargingCurrent'] = 'max'
+                settings.maximum_current.value = 32.0
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'auto_unlock':
-            setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if value else 'off'
+            setting_dict['autoUnlockPlugWhenCharged'] = 'on' if value else 'off'
         elif settings.auto_unlock.enabled and settings.auto_unlock.value is not None:
-            setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if settings.auto_unlock.value else 'off'
+            setting_dict['autoUnlockPlugWhenCharged'] = 'on' if settings.auto_unlock.value else 'off'
         precision: float = settings.target_level.precision if settings.target_level.precision is not None else 10.0
         if isinstance(attribute, LevelAttribute) and attribute.id == 'target_level':
             value = round(value / precision) * precision
-            setting_dict['targetSOC_pct'] = value
+            setting_dict['targetSOCPercentage'] = value
         elif settings.target_level.enabled and settings.target_level.value is not None:
-            setting_dict['targetSOC_pct'] = round(settings.target_level.value / precision) * precision
+            setting_dict['targetSOCPercentage'] = round(settings.target_level.value / precision) * precision
 
-        url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/charging/settings'
+        url: stc = self.base_url + f'/ev/v1/vehicle/{vuuid}/charging/settings'
         try:
             settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
             if settings_response.status_code != requests.codes['ok']:
@@ -1720,14 +1617,17 @@ class Connector(BaseConnector):
         vin: Optional[str] = vehicle.vin.value
         if vin is None:
             raise CommandError('VIN in object hierarchy missing')
+        vuuid: Optional[str] = vehicle.uuid.value
+        if vuuid is None:
+            raise SetterError('UUID in object hierarchy missing')
         if 'command' not in command_arguments:
             raise CommandError('Command argument missing')
         try:
             if command_arguments['command'] == WindowHeatingStartStopCommand.Command.START:
-                url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/windowheating/start'
+                url = self.base_url + '/ev/v1/vehicle/{vuuid}/pretripclimate/windowheating/start'
                 command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
             elif command_arguments['command'] == WindowHeatingStartStopCommand.Command.STOP:
-                url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/windowheating/stop'
+                url = self.base_url + '/ev/v1/vehicle/{vuuid}/pretripclimate/windowheating/stop'
                 command_response: requests.Response = self.session.post(url, data='{}', allow_redirects=True)
             else:
                 raise CommandError(f'Unknown command {command_arguments["command"]}')

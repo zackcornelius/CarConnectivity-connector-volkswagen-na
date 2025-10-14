@@ -199,7 +199,7 @@ class MyVWSession(VWWebSession):
                     'state': self.token['state'],
                     'id_token': self.token['id_token'],
                     'redirect_uri': self.redirect_uri,
-                    'region': 'emea',
+                    'region': 'na',
                     'access_token': self.token['access_token'],
                     'authorizationCode': self.token['code'],
                 })
