@@ -477,7 +477,8 @@ class Connector(BaseConnector):
             else:
                 raise APIError('Could not fetch vehicle status, timestamp, clampStateTimestamp and instrumentCluserTime missing')
 
-            if 'platform' in data and data['platform'] in ['MEB'] and not isinstance(vehicle, VolkswagenNAElectricVehicle):
+            if 'platform' in data and data['platform'] in ['MEB']:
+                if not isinstance(vehicle, VolkswagenNAElectricVehicle):
                 LOG.debug('Promoting %s to VolkswagenNAElectricVehicle object for %s', vehicle.__class__.__name__, vin)
                 vehicle = VolkswagenNAElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
                 self.car_connectivity.garage.replace_vehicle(vin, vehicle)
