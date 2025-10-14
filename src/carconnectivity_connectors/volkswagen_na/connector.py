@@ -110,7 +110,7 @@ class Connector(BaseConnector):
                 self.active_config['netrc'] = os.path.join(os.path.expanduser("~"), ".netrc")
             try:
                 secrets = netrc.netrc(file=self.active_config['netrc'])
-                secret: tuple[str, str, str] | None = secrets.authenticators("volkswagen")
+                secret: tuple[str, str, str] | None = secrets.authenticators("volkswagen_na")
                 if secret is None:
                     raise AuthenticationError(f'Authentication using {self.active_config["netrc"]} failed: volkswagen not found in netrc')
                 self.active_config['username'], account, self.active_config['password'] = secret

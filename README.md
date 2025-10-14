@@ -1,6 +1,6 @@
 
 
-# CarConnectivity Connector for Volkswagen Vehicles
+# CarConnectivity Connector for Volkswagen North American Vehicles
 [![GitHub sourcecode](https://img.shields.io/badge/Source-GitHub-green)](https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/tillsteinbach/CarConnectivity-connector-volkswagen)](https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/latest)
 [![GitHub](https://img.shields.io/github/license/tillsteinbach/CarConnectivity-connector-volkswagen)](https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/blob/master/LICENSE)
@@ -35,8 +35,8 @@ In your carconnectivity.json configuration add a section for the volkswagen conn
 ### Credentials
 If you do not want to provide your username or password inside the configuration you have to create a ".netrc" file at the appropriate location (usually this is your home folder):
 ```
-# For WeConnect
-machine volkswagen
+# For MyVW
+machine volkswagen_na
 login test@test.de
 password testpassword123
 ```
@@ -46,7 +46,7 @@ In this case the configuration needs to look like this:
     "carConnectivity": {
         "connectors": [
             {
-                "type": "volkswagen",
+                "type": "volkswagen_na",
                 "config": {
                 }
             }
@@ -61,7 +61,7 @@ You can also provide the location of the netrc file in the configuration.
     "carConnectivity": {
         "connectors": [
             {
-                "type": "volkswagen",
+                "type": "volkswagen_na",
                 "config": {
                     "netrc": "/some/path/on/your/filesystem"
                 }
@@ -73,10 +73,10 @@ You can also provide the location of the netrc file in the configuration.
 The optional S-PIN needed for some commands can be provided in the account section of the netrc:
 ```
 # For WeConnect
-machine volkswagen
+machine volkswagen_na
 login test@test.de
 password testpassword123
 account 1234
 ```
 ### Limitations
-The connector is not working with US based vehicles.
+The connector is currently only for US based vehicles, and is limited in support for non EV (id.4) vehicles. If someone can test with US based non-id.4 vehicles (or newer 2025 id.4's where lock/unlock works), I can work with them to get this working there too
