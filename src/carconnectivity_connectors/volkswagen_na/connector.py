@@ -468,12 +468,14 @@ class Connector(BaseConnector):
             data = data['data']
         if data is not None:
             print(f'Vehicle {vehicle.vin} status', data)
-            if 'clampStateTimestamp' in data and data['clampStateTimestamp'] is not None:
+            if 'timestamp' in data and data['timestamp'] is not None:
+                captured_at: datetime = datetime.fromtimestamp(data['timestamp'] / 1000, tz=timezone.utc)
+            elif 'clampStateTimestamp' in data and data['clampStateTimestamp'] is not None:
                 captured_at: datetime = datetime.fromtimestamp(data['clampStateTimestamp'] / 1000, tz=timezone.utc)
             elif 'instrumentCluserTime' in data and data['instrumentCluserTime'] is not None:
                 captured_at: datetime = robust_time_parse(data['instrumentCluserTime'])
             else:
-                raise APIError('Could not fetch vehicle status, clampStateTimestamp and instrumentCluserTime missing')
+                raise APIError('Could not fetch vehicle status, timestamp, clampStateTimestamp and instrumentCluserTime missing')
 
             if 'platform' in data and data['platform'] in ['MEB'] and not isinstance(vehicle, VolkswagenNAElectricVehicle):
                 LOG.debug('Promoting %s to VolkswagenNAElectricVehicle object for %s', vehicle.__class__.__name__, vin)
@@ -541,8 +543,7 @@ class Connector(BaseConnector):
             if 'location' in data and data['location'] is not None:
                 if 'timestamp' not in data['location'] or data['location']['timestamp'] is None:
                     raise APIError('Could not fetch vehicle status, timestmap missing')
-                captured_at: datetime = datetime.fromtimestamp((data['location']['timestamp'] / 1000), tz=timestamp.utc)
-                captured_at.replace(tzinfo=timezone.utc)
+                captured_at: datetime = datetime.fromtimestamp((data['location']['timestamp'] / 1000), tz=timezone.utc)
 
                 if 'latitude' in data['location'] and data['location']['latitude'] is not None and 'longitude' in data['location'] and data['location']['longitude'] is not None:
                     vehicle.position.latitude._set_value(data['location']['latitude'], measured=captured_at)  # pylint: disable=protected-access
@@ -558,8 +559,7 @@ class Connector(BaseConnector):
             elif 'lastParkedLocation' in data and data['lastParkedLocation'] is not None:
                 if 'timestamp' not in data['lastParkedLocation'] or data['lastParkedLocation']['timestamp'] is None:
                     raise APIError('Could not fetch vehicle status, timestmap missing')
-                captured_at: datetime = datetime.fromtimestamp((data['lastParkedLocation']['timestamp'] / 1000), tz=timestamp.utc)
-                captured_at.replace(tzinfo=timezone.utc)
+                captured_at: datetime = datetime.fromtimestamp((data['lastParkedLocation']['timestamp'] / 1000), tz=timezone.utc)
 
                 if 'latitude' in data['lastParkedLocation'] and data['lastParkedLocation']['latitude'] is not None and 'longitude' in data['lastParkedLocation'] and data['lastParkedLocation']['longitude'] is not None:
                     vehicle.position.latitude._set_value(data['lastParkedLocation']['latitude'], measured=captured_at)  # pylint: disable=protected-access
@@ -636,8 +636,7 @@ class Connector(BaseConnector):
                 if 'doorStatus' in exteriorStatus and exteriorStatus['doorStatus'] is not None:
                     all_doors_closed = True
                     if 'doorStatusTimestmap' in exteriorStatus['doorStatus']:
-                        captured_at = datetime.fromtimestamp((exteriorStatus['doorStatus']['doorStatusTimestamp'] / 1000), tz=timestamp.utc)
-                        captured_at.replace(tzinfo=timezone.utc)
+                        captured_at = datetime.fromtimestamp((exteriorStatus['doorStatus']['doorStatusTimestamp'] / 1000), tz=timezone.utc)
                     for door_id, door_status in exteriorStatus['doorStatus'].items():
                         if door_status == 'NOTAVAILABLE' or door_id == 'doorStatusTimestamp':
                             continue
@@ -661,8 +660,7 @@ class Connector(BaseConnector):
                         LOG_API.info('Unknown door status %s', door_status['status'])
                 if 'doorLockStatus' in exteriorStatus and exteriorStatus['doorLockStatus'] is not None:
                     if 'doorLockStatusTimestmap' in exteriorStatus['doorLockStatus']:
-                        captured_at = datetime.fromtimestamp((exteriorStatus['doorLockStatus']['doorLockStatusTimestamp'] / 1000), tz=timestamp.utc)
-                        captured_at.replace(tzinfo=timezone.utc)
+                        captured_at = datetime.fromtimestamp((exteriorStatus['doorLockStatus']['doorLockStatusTimestamp'] / 1000), tz=timezone.utc)
                     for door_id, door_status in exteriorStatus['doorLockStatus'].items():
                         if door_status == 'NOTAVAILABLE' or door_id == 'doorLockStatusTimestamp':
                             continue
@@ -690,8 +688,7 @@ class Connector(BaseConnector):
 
                 if 'windowStatus' in exteriorStatus and exteriorStatus['windowStatus'] is not None:
                     if 'windowStatusTimestmap' in exteriorStatus['windowStatus']:
-                        captured_at = datetime.fromtimestamp((exteriorStatus['windowStatus']['windowStatusTimestamp'] / 1000), tz=timestamp.utc)
-                        captured_at.replace(tzinfo=None)
+                        captured_at = datetime.fromtimestamp((exteriorStatus['windowStatus']['windowStatusTimestamp'] / 1000), tz=timezone.utc)
                     seen_window_ids: set[str] = set()
                     all_windows_closed = True
                     for window_id, window_status in exteriorStatus['windowStatus'].items():
@@ -778,8 +775,7 @@ class Connector(BaseConnector):
                 if 'data' in climate_data:
                     climate_data = climate_data['data']
                 if 'carCapturedTimestamp' in climate_data:
-                    captured_at: datetime = datetime.fromtimestamp((climate_data['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((climate_data['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                 else:
                     raise APIError('Missing carCapturedTimestamp on climatization summary')
                 if not isinstance(vehicle.climatization, VolkswagenClimatization):
@@ -795,8 +791,7 @@ class Connector(BaseConnector):
                         climatisation_status = climate_data['climateStatusReport']
                         if 'carCapturedTimestamp' not in climatisation_status or climatisation_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                        captured_at: datetime = datetime.fromtimestamp((climatisation_status['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                        captured_at.replace(tzinfo=timezone.utc)
+                        captured_at: datetime = datetime.fromtimestamp((climatisation_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                         if 'climateStatusInd' in climatisation_status and climatisation_status['climateStatusInd'] is not None:
                             if climatisation_status['climateStatusInd'] in [item.value for item in VolkswagenClimatization.ClimatizationState]:
                                 climatization_state: VolkswagenClimatization.ClimatizationState = \
@@ -825,8 +820,7 @@ class Connector(BaseConnector):
                     climatisation_settings = climate_data['climateSettings']
                     if 'carCapturedTimestamp' not in climatisation_settings or climatisation_settings['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                    captured_at: datetime = datetime.fromtimestamp((climatisation_settings['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((climatisation_settings['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                     preferred_unit: Temperature = Temperature.C
                     precision: float = 0.5
                     if 'targetTemperature' in climatisation_settings and climatisation_settings['targetTemperature'] is not None:
@@ -1038,8 +1032,7 @@ class Connector(BaseConnector):
                 if 'data' in charge_data:
                     charge_data = charge_data['data']
                 if 'carCapturedTimestamp' in charge_data:
-                    captured_at: datetime = datetime.fromtimestamp((charge_data['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((charge_data['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                 else:
                     raise APIError('Missing carCapturedTimestamp on EV Charge summary')
 
@@ -1049,8 +1042,7 @@ class Connector(BaseConnector):
                     battery_status = charge_data['batteryStatus']
                     if 'carCapturedTimestamp' not in battery_status or battery_status['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                    captured_at: datetime = datetime.fromtimestamp((battery_status['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((battery_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                     if 'currentSOCPct' in battery_status  and battery_status['currentSOCPct'] is not None:
                         drive = vehicle.drives.drives['primary']
                         # pylint: disable-next=protected-access
@@ -1061,8 +1053,7 @@ class Connector(BaseConnector):
                     charging_status = charge_data['chargingStatus']
                     if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                    captured_at: datetime = datetime.fromtimestamp((charging_status['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((charging_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
 
                     if charging_status['currentChargeState'] in [item.value for item in VolkswagenNACharging.VolkswagenChargingState]:
                         volkswagen_charging_state = VolkswagenNACharging.VolkswagenChargingState(charging_status['currentChargeState'])
@@ -1111,8 +1102,7 @@ class Connector(BaseConnector):
                     charging_settings = charge_data['chargeSettings']
                     if 'carCapturedTimestamp' not in charging_settings or charging_settings['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                    captured_at: datetime = datetime.fromtimestamp((charging_settings['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((charging_settings['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                     if 'maxChargingCurrent' in charging_settings and charging_settings['maxChargingCurrent'] is not None:
                         if isinstance(vehicle.charging.settings, VolkswagenNACharging.Settings):
                             vehicle.charging.settings.max_current_in_ampere = True
@@ -1167,8 +1157,7 @@ class Connector(BaseConnector):
                     plug_status = charge_data['plugStatus']
                     if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
-                    captured_at: datetime = datetime.fromtimestamp((plug_status['carCapturedTimestamp'] / 1000), tz=timestamp.utc)
-                    captured_at.replace(tzinfo=timezone.utc)
+                    captured_at: datetime = datetime.fromtimestamp((plug_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
                     if 'plugConnectionState' in plug_status and plug_status['plugConnectionState'] is not None:
                         if plug_status['plugConnectionState'] in [item.value for item in ChargingConnector.ChargingConnectorConnectionState]:
                             plug_state: ChargingConnector.ChargingConnectorConnectionState = \
@@ -1402,7 +1391,8 @@ class Connector(BaseConnector):
         elif settings.rear_zone_right_enabled.enabled and settings.rear_zone_right_enabled.value is not None:
             setting_dict['climatizationElementSettings']['zoneRearRightEnabled'] = settings.rear_zone_right_enabled.value
 
-        url: str = self.base_url + f'/ev/v1/vehicle/{vuuid}/pretripclimate/settings?tempUnit={setting_dict['targetTemperature']['unit']}'
+        unit = setting_dict['targetTemperature']['unit']
+        url: str = self.base_url + f'/ev/v1/vehicle/{vuuid}/pretripclimate/settings?tempUnit={unit}'
         try:
             LOG.debug('Setting climatization settings for vehicle %s to %s', vin, str(setting_dict))
             settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
