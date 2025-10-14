@@ -1563,12 +1563,12 @@ class Connector(BaseConnector):
         precision: float = settings.maximum_current.precision if settings.maximum_current.precision is not None else 1.0
         if isinstance(attribute, CurrentAttribute) and attribute.id == 'maximum_current':
             value = round(value / precision) * precision
-                if value < 12:
-                    setting_dict['maxChargingCurrent'] = 'reduced'
-                    value = 6.0
-                else:
-                    setting_dict['maxChargingCurrent'] = 'maximum'
-                    value = 32.0
+            if value < 12:
+                setting_dict['maxChargingCurrent'] = 'reduced'
+                value = 6.0
+            else:
+                setting_dict['maxChargingCurrent'] = 'maximum'
+                value = 32.0
         elif settings.maximum_current.enabled and settings.maximum_current.value is not None:
             if settings.maximum_current.value < 6:
                 raise SetterError('Maximum current must be greater than 6 amps')
