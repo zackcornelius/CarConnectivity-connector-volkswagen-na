@@ -478,9 +478,9 @@ class Connector(BaseConnector):
 
             if 'platform' in data and data['platform'] in ['MEB']:
                 if not isinstance(vehicle, VolkswagenNAElectricVehicle):
-                LOG.debug('Promoting %s to VolkswagenNAElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                vehicle = VolkswagenNAElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
-                self.car_connectivity.garage.replace_vehicle(vin, vehicle)
+                    LOG.debug('Promoting %s to VolkswagenNAElectricVehicle object for %s', vehicle.__class__.__name__, vin)
+                    vehicle = VolkswagenNAElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
+                    self.car_connectivity.garage.replace_vehicle(vin, vehicle)
             elif not isinstance(vehicle, VolkswagenNACombustionVehicle):
                 # No hybrids in the US right now
                 LOG.debug('Promoting %s to VolkswagenNACombustionVehicle object for %s', vehicle.__class__.__name__, vin)
