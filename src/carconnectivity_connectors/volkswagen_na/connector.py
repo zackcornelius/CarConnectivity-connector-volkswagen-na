@@ -314,7 +314,7 @@ class Connector(BaseConnector):
                             vehicle.model._set_value(vehicle_dict['modelName'])  # pylint: disable=protected-access
                         else:
                             vehicle.model._set_value(None)  # pylint: disable=protected-access
-                        
+
                         rrs_url = self.base_url + f'/rrs/v1/privileges/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}'
                         rrs_data = self.session.get(rrs_url)
                         #rrs_data = self._fetch_data(rrs_url, session=self.session)
@@ -343,7 +343,19 @@ class Connector(BaseConnector):
                                                 LOG_API.warning('Capability status unkown %s', status)
                                                 capability.status.value = [Capability.Status.UNKNOWN]
 
-                                        log_extra_keys(LOG_API, 'service.operation', operation, {'longCode', 'shortCode', 'capabilityStatus', 'subscriptionStatus', 'privilege', 'playProtection'})
+                                        log_extra_keys(
+                                                LOG_API,
+                                                'service.operation',
+                                                operation,
+                                                {
+                                                    'longCode',
+                                                    'shortCode',
+                                                    'capabilityStatus',
+                                                    'subscriptionStatus',
+                                                    'privilege',
+                                                    'playProtection'
+                                                    }
+                                                )
                             for capability_id in vehicle.capabilities.capabilities.keys() - found_capabilities:
                                 vehicle.capabilities.remove_capability(capability_id)
                         else:
@@ -653,11 +665,11 @@ class Connector(BaseConnector):
                             all_doors_closed = False
                         else:
                             door.open_state._set_value(Doors.OpenState.UNKNOWN, measured=captured_at)  # pylint: disable=protected-access
+                            LOG_API.info('Unknown door status %s', door_status)
                     if all_doors_closed:
                         vehicle.doors.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
                     else:
                         vehicle.doors.open_state._set_value(Doors.OpenState.OPEN, measured=captured_at)  # pylint: disable=protected-access
-                        LOG_API.info('Unknown door status %s', door_status['status'])
                 if 'doorLockStatus' in exteriorStatus and exteriorStatus['doorLockStatus'] is not None:
                     if 'doorLockStatusTimestmap' in exteriorStatus['doorLockStatus']:
                         captured_at = datetime.fromtimestamp((exteriorStatus['doorLockStatus']['doorLockStatusTimestamp'] / 1000), tz=timezone.utc)
@@ -964,7 +976,7 @@ class Connector(BaseConnector):
                     vehicle.climatization.settings.rear_zone_right_enabled._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.seat_heating._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.heater_source._set_value(None)  # pylint: disable=protected-access
-                
+
                 if 'windowHeatingStatus' in climate_data and climate_data['windowHeatingStatus'] is not None:
                     if 'value' in climate_data['windowHeatingStatus'] and climate_data['windowHeatingStatus']['value'] is not None:
                         window_heating_status = climate_data['windowHeatingStatus']['value']
