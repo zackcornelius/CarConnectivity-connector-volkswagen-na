@@ -19,7 +19,7 @@ class ConnectorUI(BaseConnectorUI):
     A user interface class for the Volkswagen connector in the Car Connectivity application.
     """
     def __init__(self, connector: BaseConnector):
-        blueprint: Optional[flask.Blueprint] = flask.Blueprint(name=connector.id, import_name='carconnectivity-connector-volkswagen', url_prefix=f'/{connector.id}',
+        blueprint: Optional[flask.Blueprint] = flask.Blueprint(name=connector.id, import_name='carconnectivity-connector-volkswagen-na', url_prefix=f'/{connector.id}',
                                                                template_folder=os.path.dirname(__file__) + '/templates')
         super().__init__(connector, blueprint=blueprint)
 
@@ -34,6 +34,6 @@ class ConnectorUI(BaseConnectorUI):
         Returns the title of the connector.
 
         Returns:
-            str: The title of the connector, which is "Volkswagen".
+            str: The title of the connector, which is "Volkswagen NA (MyVW)".
         """
-        return "Volkswagen"
+        return "Volkswagen NA (MyVW)"

@@ -3,13 +3,13 @@
 # CarConnectivity Connector for Volkswagen Config Options
 The configuration for CarConnectivity is a .json file.
 ## Volkswagen Connector Options
-These are the valid options for the Volkswagen Connector
+These are the valid options for the Volkswagen North America Connector
 ```json
 {
     "carConnectivity": {
         "connectors": [
             {
-                "type": "volkswagen", // Definition for the Volkswagen Connector
+                "type": "volkswagen_na", // Definition for the Volkswagen Connector
                 "config": {
                     "log_level": "error", // set the connectos log level
                     "interval": 300, // Interval in which the server is checked in seconds
