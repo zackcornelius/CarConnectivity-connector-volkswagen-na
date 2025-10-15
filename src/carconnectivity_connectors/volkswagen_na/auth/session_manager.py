@@ -93,7 +93,7 @@ class SessionManager():
         Returns:
             str: A unique identifier string.
         """
-        return 'CarConnectivity-connector-volkswagen:' + SessionManager.generate_hash(service, session_user)
+        return 'CarConnectivity-connector-volkswagen-na:' + SessionManager.generate_hash(service, session_user)
 
     def get_session(self, service: Service, session_user: SessionUser) -> VWWebSession:
         """

@@ -1337,7 +1337,7 @@ class Connector(BaseConnector):
         return __version__
 
     def get_type(self) -> str:
-        return "carconnectivity-connector-volkswagen"
+        return "carconnectivity-connector-volkswagen-na"
 
     def __on_air_conditioning_settings_change(self, attribute: GenericAttribute, value: Any) -> Any:
         """
