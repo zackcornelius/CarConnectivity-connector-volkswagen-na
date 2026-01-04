@@ -47,14 +47,18 @@ from carconnectivity_connectors.volkswagen_na._version import __version__
 from carconnectivity_connectors.volkswagen_na.charging import VolkswagenNACharging, mapping_volskwagen_charging_state
 
 SUPPORT_IMAGES = False
+SUPPORT_IMAGES_STR: str = ""
 try:
     from PIL import Image
     import base64
     import io
     SUPPORT_IMAGES = True
     from carconnectivity.attributes import ImageAttribute
-except ImportError:
-    pass
+except ImportError as exc:
+    if str(exc) == "No module named 'PIL'":
+        SUPPORT_IMAGES_STR = str(exc) + " (cannot find pillow library)"
+    else:
+        SUPPORT_IMAGES_STR = str(exc)  # pylint: disable=invalid-name
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Any, Union
@@ -75,15 +79,18 @@ class Connector(BaseConnector):
     Attributes:
         max_age (Optional[int]): Maximum age for cached data in seconds.
     """
-    def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict) -> None:
-        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API)
+    def __init__(self, connector_id: str, car_connectivity: CarConnectivity, config: Dict, initialization: Optional[Dict] = None) -> None:
+        BaseConnector.__init__(self, connector_id=connector_id, car_connectivity=car_connectivity, config=config, log=LOG, api_log=LOG_API,
+                               initialization=initialization)
 
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        self.connection_state: EnumAttribute = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
-                                                             value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
-        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
+        self.connection_state: EnumAttribute[ConnectionState] = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
+                                                                              value=ConnectionState.DISCONNECTED, tags={'connector_custom'},
+                                                                              initialization=self.get_initialization('connection_state'))
+        self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'},
+                                                             initialization=self.get_initialization('interval'))
         self.interval.minimum = timedelta(seconds=180)
         self.interval._is_changeable = True  # pylint: disable=protected-access
 
@@ -138,6 +145,14 @@ class Connector(BaseConnector):
         if 'max_age' in config:
             self.active_config['max_age'] = config['max_age']
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
+        self.active_config['online_timeout'] = self.active_config['interval'] + 60
+        if 'online_timeout' in config:
+            self.active_config['online_timeout'] = config['online_timeout']
+        self.online_timeout: timedelta = timedelta(seconds=self.active_config['online_timeout'])
+
+        self.active_config['force_enable_access'] = False
+        if 'force_enable_access' in config:
+            self.active_config['force_enable_access'] = config['force_enable_access']
 
         if self.active_config['username'] is None or self.active_config['password'] is None:
             raise AuthenticationError('Username or password not provided')
@@ -157,6 +172,13 @@ class Connector(BaseConnector):
         self.base_url = f"https://b-h-s.spr.{countrypart}00.p.con-veh.net"
         self.session.retries = 3
         self.session.timeout = 180
+        # Check if tokens exist before attempting to refresh
+        if self.session.token is not None and self.session.refresh_token is not None:
+            LOG.debug("Existing tokens found, refreshing session")
+            self.session.refresh()
+        else:
+            LOG.debug("No existing tokens found, performing initial login")
+            self.session.login()
 
         self._elapsed: List[timedelta] = []
 
@@ -301,7 +323,8 @@ class Connector(BaseConnector):
                         seen_vehicle_vins.add(vehicle_dict['vin'])
                         vehicle: Optional[VolkswagenNAVehicle] = garage.get_vehicle(vehicle_dict['vin'])  # pyright: ignore[reportAssignmentType]
                         if vehicle is None:
-                            vehicle = VolkswagenNAVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self)
+                            vehicle = VolkswagenNAVehicle(vin=vehicle_dict['vin'], garage=garage, managing_connector=self,
+                                                          initialization=garage.get_initialization(vehicle_dict['vin']))
                             garage.add_vehicle(vehicle_dict['vin'], vehicle)
 
                         if 'vehicleId' not in vehicle_dict or vehicle_dict['vehicleId'] is None:
@@ -336,7 +359,8 @@ class Connector(BaseConnector):
                                         if vehicle.capabilities.has_capability(capability_id):
                                             capability: Capability = vehicle.capabilities.get_capability(capability_id)
                                         else:
-                                            capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities)
+                                            capability = Capability(capability_id=capability_id, capabilities=vehicle.capabilities,
+                                                                    initialization=vehicle.capabilities.get_initialization(capability_id))
                                             vehicle.capabilities.add_capability(capability_id, capability)
                                         if 'capabilityStatus' in service_dict and service_dict['capabilityStatus'] is not None:
                                             status = service_dict['capabilityStatus']
@@ -435,7 +459,8 @@ class Connector(BaseConnector):
                                         vehicle.images.images['car_picture']._set_value(img)  # pylint: disable=protected-access
                                     else:
                                         vehicle.images.images['car_picture'] = ImageAttribute(name="car_picture", parent=vehicle.images,
-                                                                                              value=img, tags={'carconnectivity'})
+                                                                                              value=img, tags={'carconnectivity'},
+                                                                                              initialization=vehicle.images.get_initialization('car_picture'))
                     else:
                         raise APIError('Could not fetch vehicle data, VIN missing')
         for vin in set(garage.list_vehicle_vins()) - seen_vehicle_vins:
@@ -455,12 +480,12 @@ class Connector(BaseConnector):
             # pylint: disable=protected-access
             if vehicle.connection_state is not None and vehicle.connection_state.enabled \
                     and vehicle.connection_state.value == GenericVehicle.ConnectionState.OFFLINE:
-                vehicle.state._set_value(GenericVehicle.State.OFFLINE)
+                vehicle.state._set_value(GenericVehicle.State.OFFLINE, measured=vehicle.connection_state.last_updated)  # pylint: disable=protected-access
             elif vehicle.is_active is not None and vehicle.is_active.enabled and vehicle.is_active.value:
-                vehicle.state._set_value(GenericVehicle.State.IGNITION_ON)  # pylint: disable=protected-access
+                vehicle.state._set_value(GenericVehicle.State.IGNITION_ON, measured=vehicle.is_active.last_updated)  # pylint: disable=protected-access
             elif vehicle.position is not None and vehicle.position.enabled and vehicle.position.position_type is not None \
                     and vehicle.position.position_type.enabled and vehicle.position.position_type.value == Position.PositionType.PARKING:
-                vehicle.state._set_value(GenericVehicle.State.PARKED)  # pylint: disable=protected-access
+                vehicle.state._set_value(GenericVehicle.State.PARKED, measured=vehicle.position.position_type.last_updated)  # pylint: disable=protected-access
             else:
                 vehicle.state._set_value(GenericVehicle.State.UNKNOWN)  # pylint: disable=protected-access
 
@@ -496,16 +521,19 @@ class Connector(BaseConnector):
                 captured_at: datetime = robust_time_parse(data['instrumentCluserTime'])
             else:
                 raise APIError('Could not fetch vehicle status, timestamp, clampStateTimestamp and instrumentCluserTime missing')
+            self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
 
             if 'platform' in data and data['platform'] in ['MEB']:
                 if not isinstance(vehicle, VolkswagenNAElectricVehicle):
                     LOG.debug('Promoting %s to VolkswagenNAElectricVehicle object for %s', vehicle.__class__.__name__, vin)
-                    vehicle = VolkswagenNAElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle)
+                    vehicle = VolkswagenNAElectricVehicle(garage=self.car_connectivity.garage, origin=vehicle,
+                                                          initialization=self.car_connectivity.garage.get_initialization(vin))
                     self.car_connectivity.garage.replace_vehicle(vin, vehicle)
             elif not isinstance(vehicle, VolkswagenNACombustionVehicle):
                 # No hybrids in the US right now
                 LOG.debug('Promoting %s to VolkswagenNACombustionVehicle object for %s', vehicle.__class__.__name__, vin)
-                vehicle = VolkswagenNACombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle)
+                vehicle = VolkswagenNACombustionVehicle(garage=self.car_connectivity.garage, origin=vehicle,
+                                                        initialization=self.car_connectivity.garage.get_initialization(vin))
                 self.car_connectivity.garage.replace_vehicle(vin, vehicle)
             if 'powerStatus' in data and data['powerStatus'] is not None:
                 power_status = data['powerStatus']
@@ -520,17 +548,17 @@ class Connector(BaseConnector):
                     drive: GenericDrive = vehicle.drives.drives[drive_id]
                 else:
                     if engine_type == GenericDrive.Type.ELECTRIC:
-                        drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives)
+                        drive = ElectricDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                     elif engine_type == GenericDrive.Type.DIESEL:
-                        drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives)
+                        drive = DieselDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                     elif engine_type in [GenericDrive.Type.FUEL,
                                          GenericDrive.Type.GASOLINE,
                                          GenericDrive.Type.PETROL,
                                          GenericDrive.Type.CNG,
                                          GenericDrive.Type.LPG]:
-                        drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives)
+                        drive = CombustionDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                     else:
-                        drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives)
+                        drive = GenericDrive(drive_id=drive_id, drives=vehicle.drives, initialization=vehicle.drives.get_initialization(drive_id))
                     drive.type._set_value(engine_type)  # pylint: disable=protected-access
                     vehicle.drives.add_drive(drive)
                 if 'cruiseRange' in power_status and power_status['cruiseRange'] is not None:
@@ -580,6 +608,7 @@ class Connector(BaseConnector):
                 if 'timestamp' not in data['lastParkedLocation'] or data['lastParkedLocation']['timestamp'] is None:
                     raise APIError('Could not fetch vehicle status, timestmap missing')
                 captured_at: datetime = datetime.fromtimestamp((data['lastParkedLocation']['timestamp'] / 1000), tz=timezone.utc)
+                self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
 
                 if 'latitude' in data['lastParkedLocation'] and data['lastParkedLocation']['latitude'] is not None and 'longitude' in data['lastParkedLocation'] and data['lastParkedLocation']['longitude'] is not None:
                     vehicle.position.latitude._set_value(data['lastParkedLocation']['latitude'], measured=captured_at)  # pylint: disable=protected-access
@@ -605,6 +634,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in temperature_outside_status or temperature_outside_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(temperature_outside_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'temperatureOutside_K' in temperature_outside_status and temperature_outside_status['temperatureOutside_K'] is not None:
                             # pylint: disable-next=protected-access
                             vehicle.outside_temperature._set_value(value=temperature_outside_status['temperatureOutside_K'], measured=captured_at,
@@ -621,6 +651,7 @@ class Connector(BaseConnector):
                                 if 'carCapturedTimestamp' not in temperature_battery_status or temperature_battery_status['carCapturedTimestamp'] is None:
                                     raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                                 captured_at: datetime = robust_time_parse(temperature_battery_status['carCapturedTimestamp'])
+                                self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                                 if 'temperatureHvBatteryMin_K' in temperature_battery_status \
                                         and temperature_battery_status['temperatureHvBatteryMin_K'] is not None:
                                     # pylint: disable-next=protected-access
@@ -657,6 +688,7 @@ class Connector(BaseConnector):
                     all_doors_closed = True
                     if 'doorStatusTimestmap' in exterior_status['doorStatus']:
                         captured_at = datetime.fromtimestamp((exterior_status['doorStatus']['doorStatusTimestamp'] / 1000), tz=timezone.utc)
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     for door_id, door_status in exterior_status['doorStatus'].items():
                         if door_status == 'NOTAVAILABLE' or door_id == 'doorStatusTimestamp':
                             continue
@@ -664,7 +696,7 @@ class Connector(BaseConnector):
                         if door_id in vehicle.doors.doors:
                             door: Doors.Door = vehicle.doors.doors[door_id]
                         else:
-                            door = Doors.Door(door_id=door_id, doors=vehicle.doors)
+                            door = Doors.Door(door_id=door_id, doors=vehicle.doors, initialization=vehicle.doors.get_initialization(door_id))
                             vehicle.doors.doors[door_id] = door
                         if door_status == 'CLOSED':
                             door.open_state._set_value(Doors.OpenState.CLOSED, measured=captured_at)
@@ -681,6 +713,7 @@ class Connector(BaseConnector):
                 if 'doorLockStatus' in exterior_status and exterior_status['doorLockStatus'] is not None:
                     if 'doorLockStatusTimestmap' in exterior_status['doorLockStatus']:
                         captured_at = datetime.fromtimestamp((exterior_status['doorLockStatus']['doorLockStatusTimestamp'] / 1000), tz=timezone.utc)
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     for door_id, door_status in exterior_status['doorLockStatus'].items():
                         if door_status == 'NOTAVAILABLE' or door_id == 'doorLockStatusTimestamp':
                             continue
@@ -688,7 +721,8 @@ class Connector(BaseConnector):
                         if door_id in vehicle.doors.doors:
                             door: Doors.Door = vehicle.doors.doors[door_id]
                         else:
-                            door = Doors.Door(door_id=door_id, doors=vehicle.doors)
+                            door = Doors.Door(door_id=door_id, doors=vehicle.doors,
+                                              initialization=vehicle.doors.get_initialization(door_id))
                             vehicle.doors.doors[door_id] = door
                         if door_status == 'LOCKED':
                             door.lock_state._set_value(Doors.LockState.LOCKED, measured=captured_at)
@@ -709,6 +743,7 @@ class Connector(BaseConnector):
                 if 'windowStatus' in exterior_status and exterior_status['windowStatus'] is not None:
                     if 'windowStatusTimestmap' in exterior_status['windowStatus']:
                         captured_at = datetime.fromtimestamp((exterior_status['windowStatus']['windowStatusTimestamp'] / 1000), tz=timezone.utc)
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     seen_window_ids: set[str] = set()
                     all_windows_closed = True
                     for window_id, window_status in exterior_status['windowStatus'].items():
@@ -718,7 +753,8 @@ class Connector(BaseConnector):
                         if window_id in vehicle.windows.windows:
                             window: Windows.Window = vehicle.windows.windows[window_id]
                         else:
-                            window = Windows.Window(window_id=window_id, windows=vehicle.windows)
+                            window = Windows.Window(window_id=window_id, windows=vehicle.windows,
+                                                    initialization=vehicle.windows.get_initialization(window_id))
                             vehicle.windows.windows[window_id] = window
                         if window_status == 'CLOSED':
                             window.open_state._set_value(Windows.OpenState.CLOSED, measured=captured_at)  # pylint: disable=protected-access
@@ -752,7 +788,8 @@ class Connector(BaseConnector):
                         if light_id in vehicle.lights.lights:
                             light: Lights.Light = vehicle.lights.lights[light_id]
                         else:
-                            light: Lights.Light = Lights.Light(light_id=light_id, lights=vehicle.lights)
+                            light: Lights.Light = Lights.Light(light_id=light_id, lights=vehicle.lights,
+                                                               initialization=vehicle.lights.get_initialization(light_id))
                             vehicle.lights.lights[light_id] = light
                         if light_status == 'ON':
                             all_lights_off = False
@@ -771,7 +808,7 @@ class Connector(BaseConnector):
                     for light_id in vehicle.lights.lights.keys() - seen_light_ids:
                         vehicle.lights.lights[light_id].enabled = False
                 else:
-                    vehicle.lights.light_state._set_value(None)
+                    vehicle.lights.light_state._set_value(None)  # pylint: disable=protected-access
                     vehicle.lights.enabled = False
 
 
@@ -795,6 +832,7 @@ class Connector(BaseConnector):
                     climate_data = climate_data['data']
                 if 'carCapturedTimestamp' in climate_data:
                     captured_at: datetime = datetime.fromtimestamp((climate_data['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                 else:
                     raise APIError('Missing carCapturedTimestamp on climatization summary')
                 if not isinstance(vehicle.climatization, VolkswagenClimatization):
@@ -811,6 +849,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in climatisation_status or climatisation_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = datetime.fromtimestamp((climatisation_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'climateStatusInd' in climatisation_status and climatisation_status['climateStatusInd'] is not None:
                             if climatisation_status['climateStatusInd'] in [item.value for item in VolkswagenClimatization.ClimatizationState]:
                                 climatization_state: VolkswagenClimatization.ClimatizationState = \
@@ -840,6 +879,7 @@ class Connector(BaseConnector):
                     if 'carCapturedTimestamp' not in climatisation_settings or climatisation_settings['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                     captured_at: datetime = datetime.fromtimestamp((climatisation_settings['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     preferred_unit: Temperature = Temperature.C
                     precision: float = 0.5
                     if 'targetTemperature' in climatisation_settings and climatisation_settings['targetTemperature'] is not None:
@@ -990,6 +1030,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in window_heating_status or window_heating_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(window_heating_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'windowHeatingStatus' in window_heating_status and window_heating_status['windowHeatingStatus'] is not None:
                             heating_on: bool = False
                             all_heating_invalid: bool = True
@@ -999,7 +1040,8 @@ class Connector(BaseConnector):
                                     if window_id in vehicle.window_heatings.windows:
                                         window: WindowHeatings.WindowHeating = vehicle.window_heatings.windows[window_id]
                                     else:
-                                        window = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings)
+                                        window = WindowHeatings.WindowHeating(window_id=window_id, window_heatings=vehicle.window_heatings,
+                                                                              initialization=vehicle.window_heatings.get_initialization(window_id))
                                         vehicle.window_heatings.windows[window_id] = window
                                     if 'windowHeatingState' in window_heating and window_heating['windowHeatingState'] is not None:
                                         if window_heating['windowHeatingState'] in [item.value for item in WindowHeatings.HeatingState]:
@@ -1052,6 +1094,7 @@ class Connector(BaseConnector):
                     charge_data = charge_data['data']
                 if 'carCapturedTimestamp' in charge_data:
                     captured_at: datetime = datetime.fromtimestamp((charge_data['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                 else:
                     raise APIError('Missing carCapturedTimestamp on EV Charge summary')
 
@@ -1062,6 +1105,7 @@ class Connector(BaseConnector):
                     if 'carCapturedTimestamp' not in battery_status or battery_status['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                     captured_at: datetime = datetime.fromtimestamp((battery_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     if 'currentSOCPct' in battery_status  and battery_status['currentSOCPct'] is not None:
                         drive = vehicle.drives.drives['primary']
                         # pylint: disable-next=protected-access
@@ -1073,6 +1117,7 @@ class Connector(BaseConnector):
                     if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                     captured_at: datetime = datetime.fromtimestamp((charging_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
 
                     if charging_status['currentChargeState'] in [item.value for item in VolkswagenNACharging.VolkswagenChargingState]:
                         volkswagen_charging_state = VolkswagenNACharging.VolkswagenChargingState(charging_status['currentChargeState'])
@@ -1122,6 +1167,7 @@ class Connector(BaseConnector):
                     if 'carCapturedTimestamp' not in charging_settings or charging_settings['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                     captured_at: datetime = datetime.fromtimestamp((charging_settings['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     if 'maxChargingCurrent' in charging_settings and charging_settings['maxChargingCurrent'] is not None:
                         if isinstance(vehicle.charging.settings, VolkswagenNACharging.Settings):
                             vehicle.charging.settings.max_current_in_ampere = False
@@ -1177,6 +1223,7 @@ class Connector(BaseConnector):
                     if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
                         raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                     captured_at: datetime = datetime.fromtimestamp((plug_status['carCapturedTimestamp'] / 1000), tz=timezone.utc)
+                    self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                     if 'plugConnectionState' in plug_status and plug_status['plugConnectionState'] is not None:
                         if plug_status['plugConnectionState'] in [item.value for item in ChargingConnector.ChargingConnectorConnectionState]:
                             plug_state: ChargingConnector.ChargingConnectorConnectionState = \
@@ -1226,6 +1273,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in maintenance_status or maintenance_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(maintenance_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'inspectionDue_days' in maintenance_status and maintenance_status['inspectionDue_days'] is not None:
                             inspection_due: timedelta = timedelta(days=maintenance_status['inspectionDue_days'])
                             inspection_date: datetime = captured_at + inspection_due
@@ -1284,6 +1332,31 @@ class Connector(BaseConnector):
                         log_extra_keys(LOG_API, 'readinessStatus', readiness_status, {'connectionState'})
             log_extra_keys(LOG_API, 'selectivestatus', data, {'measurements', 'access', 'vehicleLights', 'climatisation', 'vehicleHealthInspection',
                                                               'charging', 'readiness'})
+
+    def _update_online_tracking(self, vehicle: VolkswagenNAVehicle, last_measurement: Optional[datetime]) -> None:
+        if last_measurement is not None and (vehicle.last_measurement is None or last_measurement > vehicle.last_measurement):
+            if (last_measurement + self.online_timeout) > datetime.now(tz=timezone.utc):
+                rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
+                # Only set to online if the timeout is greater than 60 seconds
+                if rest_timeout.total_seconds() > 60:
+                    LOG.info('Vehicle %s is online', vehicle.vin.value)
+                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
+                    if vehicle.online_timeout_timer is not None:
+                        vehicle.online_timeout_timer.cancel()
+                    rest_timeout = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
+                    vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
+                    vehicle.online_timeout_timer.start()
+            vehicle.last_measurement = last_measurement
+
+    def _set_vehicle_offline(self, vehicle: VolkswagenNAVehicle) -> None:
+        last_online_measurement: Optional[datetime] = vehicle.last_measurement
+        # The car goes offline approximatly 2 minutes after the last measurement
+        if last_online_measurement is not None:
+            last_online_measurement += timedelta(seconds=120)
+        vehicle.connection_state._set_value(vehicle.official_connection_state, measured=last_online_measurement)  # pylint: disable=protected-access
+        vehicle.online_timeout_timer = None
+        if vehicle.official_connection_state is not None:
+            LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
@@ -1344,6 +1417,11 @@ class Connector(BaseConnector):
 
     def get_version(self) -> str:
         return __version__
+
+    def get_features(self) -> dict[str, tuple[bool, str]]:
+        features: dict[str, tuple[bool, str]] = {}
+        features['Images'] = (SUPPORT_IMAGES, SUPPORT_IMAGES_STR)
+        return features
 
     def get_type(self) -> str:
         return "carconnectivity-connector-volkswagen-na"

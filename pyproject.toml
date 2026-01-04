@@ -15,23 +15,26 @@ authors = [
     { name = "Zack Cornelius" }
 ]
 dependencies = [
-    "carconnectivity>=0.8",
+    "carconnectivity>=0.11",
     "oauthlib~=3.3.1",
-    "requests~=2.32.3",
-    "pyjwt~=2.10",
+    "requests~=2.32.5",
+    "pyjwt~=2.10"
     "pkce~=1.0.3",
 ]
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = [
+    "LICENSE",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries"
 ]
 
