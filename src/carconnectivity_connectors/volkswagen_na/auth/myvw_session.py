@@ -97,6 +97,7 @@ class MyVWSession(VWWebSession):
             (("state", self.state)),
             (("response_type", "code")),
             (("client_id", self.client_id)),
+            (("country", self.country.upper())), #< --- This addition fixes Canada/US redirect.
         ]
 
         # add required parameters redirect_uri and nonce to the authorization URL
