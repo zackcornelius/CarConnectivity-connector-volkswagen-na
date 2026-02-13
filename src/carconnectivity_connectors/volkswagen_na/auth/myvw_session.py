@@ -43,7 +43,7 @@ class MyVWSession(VWWebSession):
             client_id = "69eb3c39-d2be-4006-8197-37cc4971e8fe_MYVW_ANDROID"
         super(MyVWSession, self).__init__(
             client_id=client_id,
-            refresh_url=f"https://b-h-s.spr.{country}00.p.con-veh.net/oidc/v1/token",
+            refresh_url=f"https://b-h-s.spr.{self.country}00.p.con-veh.net/oidc/v1/token",
             scope="openid",
             redirect_uri="kombi:///login",
             state=None,
@@ -306,7 +306,7 @@ class MyVWSession(VWWebSession):
                 requests.codes["service_unavailable"],
                 requests.codes["gateway_timeout"],
             ):
-                raise TemporaryAuthenticationError("Token could not be refreshed due to temporary WeConnect failure: {tokenResponse.status_code}")
+                raise TemporaryAuthenticationError(f"Token could not be refreshed due to temporary WeConnect failure: {token_response.status_code}")
             else:
                 raise RetrievalError(f"Status Code from MyVW while refreshing tokens was: {token_response.status_code}")
         self.parse_from_body(token_response.text)
