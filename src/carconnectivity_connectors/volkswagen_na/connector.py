@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 import hashlib
 import requests
 
+from requests.exceptions import HTTPError
 from carconnectivity.garage import Garage
 from carconnectivity.errors import (
     AuthenticationError,
@@ -361,10 +362,20 @@ class Connector(BaseConnector):
                             vehicle.model._set_value(None)  # pylint: disable=protected-access
 
                         rrs_url = self.base_url + f"/rrs/v1/privileges/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}"
-                        rrs_data = self.session.get(rrs_url)
-                        # rrs_data = self._fetch_data(rrs_url, session=self.session)
+                        try:
+                            rrs_data = self.session.get(rrs_url)
+                            # rrs_data = self._fetch_data(rrs_url, session=self.session)
+                        except HTTPError as err:
+                            LOG.error("Error fetching RRS data for vehicle %s: %s", vehicle.vin, str(err))
+                            rrs_data = None
 
-                        if "data" in rrs_data and rrs_data["data"] is not None and "services" in rrs_data["data"] and rrs_data["data"]["services"] is not None:
+                        if (
+                            rrs_data
+                            and "data" in rrs_data
+                            and rrs_data["data"] is not None
+                            and "services" in rrs_data["data"]
+                            and rrs_data["data"]["services"] is not None
+                        ):
                             services = rrs_data["data"]["services"]
                             found_capabilities = set()
                             for service_dict in services:
@@ -530,7 +541,11 @@ class Connector(BaseConnector):
             raise ValueError("vehicle.vin cannot be None")
 
         print("Fetching data for vin", vehicle.vin)
-        token = self.__do_spin(vehicle)
+        try:
+            token = self.__do_spin(vehicle)
+        except HTTPError as err:
+            LOG.error("Authentication error during fetching spin token: %s", str(err))
+        token = None
 
         url = self.base_url + f"/rvs/v1/vehicle/{vehicle.uuid}"
 

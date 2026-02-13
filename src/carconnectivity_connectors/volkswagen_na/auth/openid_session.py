@@ -126,7 +126,7 @@ class OpenIDSession(requests.Session):
         self._retries = new_retries_value
         if new_retries_value:
             # Retry on internal server error (500)
-            retries = BlacklistRetry(total=new_retries_value, backoff_factor=0.1, status_forcelist=[500], status_blacklist=[429], raise_on_status=False)
+            retries = BlacklistRetry(total=new_retries_value, backoff_factor=0.1, status_forcelist=[500], status_blacklist=[403, 429], raise_on_status=False)
             self.mount("https://", HTTPAdapter(max_retries=retries))
 
     @property

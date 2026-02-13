@@ -67,6 +67,30 @@ class MyVWSession(VWWebSession):
             }
         )
 
+    def get(self, url, **kwargs):
+        """GET request with automatic error handling via raise_for_status()."""
+        response = super().get(url, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def post(self, url, **kwargs):
+        """POST request with automatic error handling via raise_for_status()."""
+        response = super().post(url, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def put(self, url, **kwargs):
+        """PUT request with automatic error handling via raise_for_status()."""
+        response = super().put(url, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def delete(self, url, **kwargs):
+        """DELETE request with automatic error handling via raise_for_status()."""
+        response = super().delete(url, **kwargs)
+        response.raise_for_status()
+        return response
+
     def login(self):
         super(MyVWSession, self).login()
         # retrieve authorization URL
@@ -262,27 +286,31 @@ class MyVWSession(VWWebSession):
         data = {"grant_type": "refresh_token", "client_id": self.client_id, "code_verifier": self.verifier, "refresh_token": self.refresh_token}
 
         # Request new tokens using the refresh token
-        token_response = self.post(
-            token_url,
-            data=data,
-            auth=auth,
-            timeout=timeout,
-            headers=headers,
-            verify=verify,
-            withhold_token=False,  # pyright: ignore reportCallIssue
-            proxies=proxies,
-            access_type=AccessType.REFRESH,  # pyright: ignore reportCallIssue
-        )
-        if token_response.status_code == requests.codes["unauthorized"]:
-            raise AuthenticationError("Refreshing tokens failed: Server requests new authorization")
-        elif token_response.status_code in (requests.codes["internal_server_error"], requests.codes["service_unavailable"], requests.codes["gateway_timeout"]):
-            raise TemporaryAuthenticationError("Token could not be refreshed due to temporary WeConnect failure: {tokenResponse.status_code}")
-        elif token_response.status_code == requests.codes["ok"]:
-            # parse new tokens from response
-            self.parse_from_body(token_response.text)
-            if self.token is not None and "refresh_token" not in self.token:
-                LOG.debug("No new refresh token given. Re-using old.")
-                self.token["refresh_token"] = refresh_token
-            return self.token
-        else:
-            raise RetrievalError(f"Status Code from MyVW while refreshing tokens was: {token_response.status_code}")
+        try:
+            token_response = self.post(
+                token_url,
+                data=data,
+                auth=auth,
+                timeout=timeout,
+                headers=headers,
+                verify=verify,
+                withhold_token=False,  # pyright: ignore reportCallIssue
+                proxies=proxies,
+                access_type=AccessType.REFRESH,  # pyright: ignore reportCallIssue
+            )
+        except requests.HTTPError:
+            if token_response.status_code == requests.codes["unauthorized"]:
+                raise AuthenticationError("Refreshing tokens failed: Server requests new authorization")
+            elif token_response.status_code in (
+                requests.codes["internal_server_error"],
+                requests.codes["service_unavailable"],
+                requests.codes["gateway_timeout"],
+            ):
+                raise TemporaryAuthenticationError("Token could not be refreshed due to temporary WeConnect failure: {tokenResponse.status_code}")
+            else:
+                raise RetrievalError(f"Status Code from MyVW while refreshing tokens was: {token_response.status_code}")
+        self.parse_from_body(token_response.text)
+        if self.token is not None and "refresh_token" not in self.token:
+            LOG.debug("No new refresh token given. Re-using old.")
+            self.token["refresh_token"] = refresh_token
+        return self.token
