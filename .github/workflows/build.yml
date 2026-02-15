@@ -2,20 +2,14 @@ name: Build Python Package
 
 # Controls when the action will run. 
 on:
-  # Triggers the workflow on push or pull request events but only for the master branch
-  push:
-    branches: [ main ]
-    tags:
-      - "v*"
-    paths:
-     - .github/workflows/build.yml
-     - '**.py'
-     - 'pyproject.toml'
+  # Triggers the workflow on pull request events
   pull_request:
     paths:
      - .github/workflows/build.yml
      - '**.py'
      - 'pyproject.toml'
+  # Allow this workflow to be called by other workflows
+  workflow_call:
 
 jobs:
   build-python:
