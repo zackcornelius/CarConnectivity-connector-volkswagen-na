@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.17](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.16...v0.1.17) (2026-04-01)
+
+
+### Bug Fixes
+
+* **SPIN:** Use country-specific TSP value ([321bd6f](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/321bd6f48579fca156f495e6cb574fcf084f8b3d)), closes [#57](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/issues/57)
+
 ## [0.1.16](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.15...v0.1.16) (2026-03-02)
 
 
