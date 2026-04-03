@@ -2063,7 +2063,9 @@ class Connector(BaseConnector):
             # Use country-specific TSP
             tsp = "ATC" if self.session.country == "ca" else "WCT"
             verify_data = {"idToken": self.session.id_token, "spinHash": verify_hash, "tsp": tsp}
-            verify_response: requests.Response = self.session.post(verify_url, data=json.dumps(verify_data), allow_redirects=True, access_type=AccessType.ACCESS)
+            verify_response: requests.Response = self.session.post(
+                verify_url, data=json.dumps(verify_data), allow_redirects=True, access_type=AccessType.ACCESS
+            )
             if verify_response.status_code != requests.codes["ok"]:
                 LOG.error("Could not execute spin verify (%s: %s)", verify_response.status_code, verify_response.text)
                 return None
