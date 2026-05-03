@@ -1985,7 +1985,7 @@ class Connector(BaseConnector):
         url = self.base_url + f"/ss/v1/user/{self.session.user_id}/spin"
         payload = {"spin": spin}
         try:
-            result = self.session.post(url, data=json.dumps(payload), allow_redirects=True, access_type=AccessType.ID)
+            result = self.session.post(url, data=json.dumps(payload), allow_redirects=True, access_type=AccessType.ACCESS)
             print(str(result.text))
             return True
         except HTTPError as http_error:
@@ -2014,7 +2014,7 @@ class Connector(BaseConnector):
         verify_url = self.base_url + f"/ss/v1/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}/session"
         try:
             try:
-                challenge_response: requests.Response = self.session.get(challenge_url, access_type=AccessType.ID)
+                challenge_response: requests.Response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
             except HTTPError as http_error:
                 http_status = _get_http_status_code(http_error)
                 LOG.debug("HTTPError in __do_spin challenge: status_code=%s, response=%s, err=%s", http_status, http_error.response, str(http_error))
@@ -2025,7 +2025,7 @@ class Connector(BaseConnector):
                     except (AuthenticationError, Exception):
                         self.session.login()
                     try:
-                        challenge_response = self.session.get(challenge_url, access_type=AccessType.ID)
+                        challenge_response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
                     except HTTPError as retry_error:
                         LOG.error("SPIN challenge retry also failed: %s", str(retry_error))
                         return None
@@ -2035,7 +2035,7 @@ class Connector(BaseConnector):
                         LOG.warning("SPIN challenge endpoint not found, but set_spin is enabled, trying to set SPIN. Error was: " + resp_text)
                         if not self.__do_set_spin(vehicle, spin):
                             return None
-                        challenge_response = self.session.get(challenge_url, access_type=AccessType.ID)
+                        challenge_response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
                     else:
                         resp_text = http_error.response.text if http_error.response is not None else "no response body"
                         LOG.warning("SPIN challenge endpoint not found: " + resp_text)
@@ -2046,7 +2046,7 @@ class Connector(BaseConnector):
                         LOG.warning("SPIN challenge endpoint forbidden, but set_spin is enabled, trying to set SPIN. Error was: " + resp_text)
                         if not self.__do_set_spin(vehicle, spin):
                             return None
-                        challenge_response = self.session.get(challenge_url, access_type=AccessType.ID)
+                        challenge_response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
                     else:
                         resp_text = http_error.response.text if http_error.response is not None else "no response body"
                         LOG.warning("SPIN challenge endpoint forbidden: " + resp_text)
@@ -2063,7 +2063,9 @@ class Connector(BaseConnector):
             # Use country-specific TSP
             tsp = "ATC" if self.session.country == "ca" else "WCT"
             verify_data = {"idToken": self.session.id_token, "spinHash": verify_hash, "tsp": tsp}
-            verify_response: requests.Response = self.session.post(verify_url, data=json.dumps(verify_data), allow_redirects=True, access_type=AccessType.ID)
+            verify_response: requests.Response = self.session.post(
+                verify_url, data=json.dumps(verify_data), allow_redirects=True, access_type=AccessType.ACCESS
+            )
             if verify_response.status_code != requests.codes["ok"]:
                 LOG.error("Could not execute spin verify (%s: %s)", verify_response.status_code, verify_response.text)
                 return None

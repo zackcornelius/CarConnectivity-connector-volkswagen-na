@@ -44,7 +44,7 @@ class MyVWSession(VWWebSession):
         super(MyVWSession, self).__init__(
             client_id=client_id,
             refresh_url=f"https://b-h-s.spr.{country}00.p.con-veh.net/oidc/v1/token",
-            scope="openid",
+            scope="openid profile cars vin",
             redirect_uri="kombi:///login",
             state=None,
             session_user=session_user,
@@ -114,7 +114,7 @@ class MyVWSession(VWWebSession):
         # self.verifier, self.challenge = pkce.generate_pkce_pair(code_verifier_length=64)
         params: list[Tuple[str, str]] = [
             (("redirect_uri", self.redirect_uri)),
-            (("scope", "openid")),
+            (("scope", "openid profile cars vin")),
             (("prompt", "login")),
             (("code_challenge", self.challenge)),
             (("state", self.state)),
