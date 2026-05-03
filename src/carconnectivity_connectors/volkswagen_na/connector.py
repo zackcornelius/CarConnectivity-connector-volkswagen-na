@@ -1995,6 +1995,20 @@ class Connector(BaseConnector):
     def __do_spin(self, vehicle: VolkswagenNAVehicle, spin: str | None = None) -> str | None:  # pylint: disable=unused-private-member
         if not isinstance(vehicle, VolkswagenNAVehicle):
             raise CommandError("Object is not a VolkswagenNAVehicle")
+        # Some accounts/regions (notably myVW Canada) report SPIN:ALL capability with
+        # status NOT_APPLICABLE. Attempting the SPIN challenge in that case yields a
+        # 401 from /ss/v1/user/{id}/challenge and triggers needless re-auth churn.
+        # Skip the SPIN flow entirely when the capability is not applicable.
+        if vehicle.capabilities.has_capability("SPIN:ALL"):
+            spin_capability = vehicle.capabilities.get_capability("SPIN:ALL")
+            if (
+                spin_capability is not None
+                and spin_capability.status.enabled
+                and spin_capability.status.value is not None
+                and Capability.Status.NOT_APPLICABLE in spin_capability.status.value
+            ):
+                LOG.debug("SPIN:ALL capability is NOT_APPLICABLE for vehicle %s, skipping SPIN challenge", vehicle.vin)
+                return None
         LOG.debug("Checking for cached spin token: %s, expires at %s", vehicle.spin_token, vehicle.spin_token_expiry)
         # Use a 120-second buffer for SPIN token expiry to match the access token buffer
         spin_expiry_buffer = timedelta(seconds=120)
