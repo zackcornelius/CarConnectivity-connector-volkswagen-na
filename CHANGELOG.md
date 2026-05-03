@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.18](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.17...v0.1.18) (2026-05-03)
+
+
+### Bug Fixes
+
+* **auth:** Request full OAuth scopes to resolve 403/401 errors ([afc9058](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/afc90586fd246b6132578daebb18991b48609568)), closes [#66](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/issues/66)
+* resolve requests dependency conflict with carconnectivity >= 0.11.9 ([3359ba1](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/3359ba11b3262026e2e76ec5718453304d0412ad))
+* **SPIN:** Use access_token instead of id_token for Bearer auth ([45b838c](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/45b838cf2a7f70f1c1381dcfe6071aca9dcfe2d0))
+
 ## [0.1.17](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.16...v0.1.17) (2026-04-01)
 
 
