@@ -2073,7 +2073,7 @@ class Connector(BaseConnector):
                 LOG.warning(f"Skipping SPIN token fetching, only {challenge_response_data['data']['remainingTries']} tries remaining")
                 return None
             verify_string = challenge_string + "." + spin
-            verify_hash = hashlib.sha512(verify_string.encode("ascii")).hexdigest()
+            verify_hash = hashlib.sha512(verify_string.encode("utf-8")).hexdigest().upper()
             # Use country-specific TSP
             tsp = "ATC" if self.session.country == "ca" else "WCT"
             verify_data = {"idToken": self.session.id_token, "spinHash": verify_hash, "tsp": tsp}
