@@ -1996,9 +1996,9 @@ class Connector(BaseConnector):
         if not isinstance(vehicle, VolkswagenNAVehicle):
             raise CommandError("Object is not a VolkswagenNAVehicle")
         # Some accounts/regions (notably myVW Canada) report SPIN:ALL capability with
-        # status NOT_APPLICABLE. Attempting the SPIN challenge in that case yields a
-        # 401 from /ss/v1/user/{id}/challenge and triggers needless re-auth churn.
-        # Skip the SPIN flow entirely when the capability is not applicable.
+        # status NOT_APPLICABLE, but SPIN actually works for these vehicles.
+        # Log it as informational and proceed with the SPIN flow regardless.
+        # See: https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/issues/66
         if vehicle.capabilities.has_capability("SPIN:ALL"):
             spin_capability = vehicle.capabilities.get_capability("SPIN:ALL")
             if (
@@ -2007,8 +2007,7 @@ class Connector(BaseConnector):
                 and spin_capability.status.value is not None
                 and Capability.Status.NOT_APPLICABLE in spin_capability.status.value
             ):
-                LOG.debug("SPIN:ALL capability is NOT_APPLICABLE for vehicle %s, skipping SPIN challenge", vehicle.vin)
-                return None
+                LOG.info("SPIN:ALL capability reports NOT_APPLICABLE for vehicle %s, but proceeding with SPIN challenge anyway", vehicle.vin)
         LOG.debug("Checking for cached spin token: %s, expires at %s", vehicle.spin_token, vehicle.spin_token_expiry)
         # Use a 120-second buffer for SPIN token expiry to match the access token buffer
         spin_expiry_buffer = timedelta(seconds=120)
@@ -2075,7 +2074,7 @@ class Connector(BaseConnector):
             verify_string = challenge_string + "." + spin
             verify_hash = hashlib.sha512(verify_string.encode("utf-8")).hexdigest().upper()
             # Use country-specific TSP
-            tsp = "ATC" if self.session.country == "ca" else "WCT"
+            tsp = "WCT"
             verify_data = {"idToken": self.session.id_token, "spinHash": verify_hash, "tsp": tsp}
             verify_response: requests.Response = self.session.post(
                 verify_url, data=json.dumps(verify_data), allow_redirects=True, access_type=AccessType.ACCESS
