@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.20](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.19...v0.1.20) (2026-05-23)
+
+
+### Bug Fixes
+
+* **ci:** Trigger a new build ([4215c3d](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/4215c3dbd6bff0098ef4ddcbe400850cd9a1b07b))
+
 ## [0.1.18](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.17...v0.1.18) (2026-05-03)
 
 
@@ -210,4 +217,3 @@ The API is not yet implemented completely! There is no way to control something 
 [0.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.3
 [0.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.2
 [0.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.1
-
