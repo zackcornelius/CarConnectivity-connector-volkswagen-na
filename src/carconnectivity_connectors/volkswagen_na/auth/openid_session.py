@@ -301,6 +301,34 @@ class OpenIDSession(requests.Session):
         """
         self.metadata["userId"] = new_user_id
 
+    @property
+    def backend_user_id(self):
+        """
+        Retrieve the backend-local user ID from the access token's 'sub' claim.
+
+        On the CA backend (ca00), the 'userId' from the login redirect (stored in
+        self.user_id / metadata['userId']) is the global IDP-level SSO ID (ssoid).
+        However, the SpinService and RRS endpoints on ca00 require the backend-local
+        subject identifier, which is the 'sub' claim in the access token JWT.
+
+        These are two different values:
+          - self.user_id  (ssoid): e.g. "91a1b71e-6b2a-48d3-a342-693e90737e4b"
+          - backend_user_id (sub): e.g. "117b0451-be6e-40c0-9048-99a70d40576c"
+
+        Falls back to self.user_id if the access token is unavailable or cannot
+        be decoded, preserving backwards compatibility with the US backend where
+        both values are the same.
+        """
+        if self.access_token is not None:
+            try:
+                payload = jwt.decode(self.access_token, options={"verify_signature": False})
+                sub = payload.get("sub")
+                if sub:
+                    return sub
+            except Exception:
+                pass
+        return self.user_id
+
     def login(self):
         """
         Logs in the user, needs to be implemetned in subclass
