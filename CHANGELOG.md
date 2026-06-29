@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.22](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.21...v0.1.22) (2026-06-29)
+
+
+### Bug Fixes
+
+* **auth:** impersonate current myVW Android app to restore NA backend access ([57c7c04](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/57c7c047bfb6d83457b62252da6526f8057d8298))
+
 ## [0.1.21](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.20...v0.1.21) (2026-05-26)
 
 
