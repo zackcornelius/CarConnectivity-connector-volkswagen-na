@@ -10,6 +10,7 @@ import logging
 import secrets
 import hashlib
 import base64
+import uuid
 
 from urllib.parse import parse_qs, parse_qsl, urlparse
 
@@ -44,7 +45,7 @@ class MyVWSession(VWWebSession):
         super(MyVWSession, self).__init__(
             client_id=client_id,
             refresh_url=f"https://b-h-s.spr.{country}00.p.con-veh.net/oidc/v1/token",
-            scope="openid profile cars vin",
+            scope="openid",
             redirect_uri="kombi:///login",
             state=None,
             session_user=session_user,
@@ -55,17 +56,40 @@ class MyVWSession(VWWebSession):
 
         self.verifier = verifier
         self.challenge = None
-        self.headers = CaseInsensitiveDict(
-            {
-                "accept": "*/*",
-                "content-type": "application/json",
-                "content-version": "1",
-                "user-agent": "Car-Net/60 CFNetwork/1121.2.2 Darwin/19.3.0",
-                "accept-language": "en-us",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-            }
-        )
+
+        # Identify as the myVW Android app; VW's edge drops clients without these headers.
+        # x-app-uuid is stable per install (persisted); mobile session id is per process.
+        self._app_uuid: str = self.metadata.get("app_uuid") or str(uuid.uuid4())
+        self.metadata["app_uuid"] = self._app_uuid
+        self._mobile_session_id: str = str(uuid.uuid4())
+        self.headers = CaseInsensitiveDict(self._app_headers("application/json;charset=UTF-8"))
+
+    # myVW Android app version; bump if VW starts rejecting it.
+    APP_VERSION: str = "2026.5.27-9076"
+
+    def _app_headers(self, content_type: str) -> Dict[str, str]:
+        """Headers the myVW Android app sends on its API/token calls."""
+        return {
+            "user-agent": "okhttp/5.3.2",
+            "x-user-agent": "mobile-android",
+            "x-app-version": self.APP_VERSION,
+            "x-app-uuid": self._app_uuid,
+            "x-mobile-session-id": self._mobile_session_id,
+            "x-user-locale": f"en-{self.country.upper()}",
+            "x-user-country": self.country.upper(),
+            "x-app-device-model": "Pixel 7",
+            "x-app-device-os": "35",
+            "content-type": content_type,
+            "accept-encoding": "gzip",
+            "connection": "Keep-Alive",
+        }
+
+    def add_token(self, uri, body=None, headers=None, access_type=AccessType.ACCESS, token=None, **kwargs):
+        """Add the Bearer token plus the x-user-id header the app sends on authenticated calls."""
+        uri, return_headers, body = super().add_token(uri, body=body, headers=headers, access_type=access_type, token=token, **kwargs)
+        if self.user_id:
+            return_headers["x-user-id"] = self.user_id
+        return uri, return_headers, body
 
     def get(self, url, *args, **kwargs):
         """GET request with automatic error handling via raise_for_status()."""
@@ -114,7 +138,7 @@ class MyVWSession(VWWebSession):
         # self.verifier, self.challenge = pkce.generate_pkce_pair(code_verifier_length=64)
         params: list[Tuple[str, str]] = [
             (("redirect_uri", self.redirect_uri)),
-            (("scope", "openid profile cars vin")),
+            (("scope", "openid")),
             (("prompt", "login")),
             (("code_challenge", self.challenge)),
             (("state", self.state)),
@@ -172,15 +196,13 @@ class MyVWSession(VWWebSession):
         #        'redirect_uri': self.redirect_uri,
         #        'code_verifier': self.verifier
         #        }
-        token_headers = {
-            "user-agent": "Car-Net/60 CFNetwork/1121.2.2 Darwin/19.3.0",
-            "content-type": "application/x-www-form-urlencoded",
-            "accept-language": "en-us",
-            "accept": "*/*",
-            "accept-encoding": "gzip, deflate, br",
-        }
-
-        response = self.websession.post(f"https://b-h-s.spr.{self.country}00.p.con-veh.net/oidc/v1/token", data=token_data, headers=token_headers)
+        # Exchange the code using the app headers; access_type=NONE (no Bearer yet).
+        response = self.post(
+            f"https://b-h-s.spr.{self.country}00.p.con-veh.net/oidc/v1/token",
+            data=token_data,
+            headers=self._app_headers("application/x-www-form-urlencoded"),
+            access_type=AccessType.NONE,
+        )
 
         # take token from authorization response (those are stored in self.token now!)
         self.parse_from_body(response.content)
@@ -267,12 +289,7 @@ class MyVWSession(VWWebSession):
         refresh_token = refresh_token or self.refresh_token
 
         if headers is None:
-            headers = {
-                "user-agent": "Car-Net/60 CFNetwork/1121.2.2 Darwin/19.3.0",
-                "content-type": "application/x-www-form-urlencoded",
-                "accept-language": "en-us",
-                "accept": "*/*",
-            }
+            headers = self._app_headers("application/x-www-form-urlencoded")
 
         data = {"grant_type": "refresh_token", "client_id": self.client_id, "code_verifier": self.verifier, "refresh_token": self.refresh_token}
 
