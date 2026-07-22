@@ -1124,6 +1124,9 @@ class Connector(BaseConnector):
                             min_temperature: Optional[float] = None
                             max_temperature: Optional[float] = None
                         LOG.debug("Updating target temperature to %s %s", target_temperature, preferred_unit.value)
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
                         self.update_float(
                             vehicle.climatization.settings.target_temperature,
                             target_temperature,
@@ -1133,21 +1136,18 @@ class Connector(BaseConnector):
                         vehicle.climatization.settings.target_temperature.minimum = min_temperature
                         vehicle.climatization.settings.target_temperature.maximum = max_temperature
                         vehicle.climatization.settings.target_temperature.precision = precision
-                        # pylint: disable-next=protected-access
-                        vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                        vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
                     if (
                         "climatizationWithoutExternalPower" in climatization_settings
                         and climatization_settings["climatizationWithoutExternalPower"] is not None
                     ):
+                        # pylint: disable-next=protected-access
+                        vehicle.climatization.settings.climatization_without_external_power._add_on_set_hook(self.__on_air_conditioning_settings_change)
+                        vehicle.climatization.settings.climatization_without_external_power._is_changeable = True  # pylint: disable=protected-access
                         self.update_boolean(
                             vehicle.climatization.settings.climatization_without_external_power,
                             climatization_settings["climatizationWithoutExternalPower"],
                             captured_at,
                         )
-                        # pylint: disable-next=protected-access
-                        vehicle.climatization.settings.climatization_without_external_power._add_on_set_hook(self.__on_air_conditioning_settings_change)
-                        vehicle.climatization.settings.climatization_without_external_power._is_changeable = True  # pylint: disable=protected-access
                     else:
                         self.update_boolean(
                             vehicle.climatization.settings.climatization_without_external_power,
@@ -1167,48 +1167,48 @@ class Connector(BaseConnector):
                         and "climatizationAtUnlock" in climatization_element_settings
                         and climatization_element_settings["climatizationAtUnlock"] is not None
                     ):
-                        self.update_boolean(
-                            vehicle.climatization.settings.climatization_at_unlock, climatization_element_settings["climatizationAtUnlock"], captured_at
-                        )
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.climatization_at_unlock._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vehicle.climatization.settings.climatization_at_unlock._is_changeable = True  # pylint: disable=protected-access
+                        self.update_boolean(
+                            vehicle.climatization.settings.climatization_at_unlock, climatization_element_settings["climatizationAtUnlock"], captured_at
+                        )
                     else:
                         self.update_boolean(vehicle.climatization.settings.climatization_at_unlock, None, captured_at)
                     if "windowHeatingEnabled" in climatization_element_settings and climatization_element_settings["windowHeatingEnabled"] is not None:
-                        self.update_boolean(vehicle.climatization.settings.window_heating, climatization_element_settings["windowHeatingEnabled"], captured_at)
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.window_heating._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vehicle.climatization.settings.window_heating._is_changeable = True  # pylint: disable=protected-access
+                        self.update_boolean(vehicle.climatization.settings.window_heating, climatization_element_settings["windowHeatingEnabled"], captured_at)
                     else:
                         self.update_boolean(vehicle.climatization.settings.window_heating, None, captured_at)
                     if "zoneFrontLeftEnabled" in climatization_element_settings and climatization_element_settings["zoneFrontLeftEnabled"] is not None:
-                        self.update_boolean(vclimatesettings.front_zone_left_enabled, climatization_element_settings["zoneFrontLeftEnabled"], captured_at)
                         # pylint: disable-next=protected-access
                         vclimatesettings.front_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vclimatesettings.front_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                        self.update_boolean(vclimatesettings.front_zone_left_enabled, climatization_element_settings["zoneFrontLeftEnabled"], captured_at)
                     else:
                         self.update_boolean(vclimatesettings.front_zone_left_enabled, None, captured_at)
                     if "zoneFrontRightEnabled" in climatization_element_settings and climatization_element_settings["zoneFrontRightEnabled"] is not None:
-                        self.update_boolean(vclimatesettings.front_zone_right_enabled, climatization_element_settings["zoneFrontRightEnabled"], captured_at)
                         # pylint: disable-next=protected-access
                         vclimatesettings.front_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vclimatesettings.front_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                        self.update_boolean(vclimatesettings.front_zone_right_enabled, climatization_element_settings["zoneFrontRightEnabled"], captured_at)
                     else:
                         self.update_boolean(vclimatesettings.front_zone_right_enabled, None, captured_at)
                     if "zoneRearLeftEnabled" in climatization_element_settings and climatization_element_settings["zoneRearLeftEnabled"] is not None:
-                        self.update_boolean(vclimatesettings.rear_zone_left_enabled, climatization_element_settings["zoneRearLeftEnabled"], captured_at)
                         # pylint: disable-next=protected-access
                         vclimatesettings.rear_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vclimatesettings.rear_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                        self.update_boolean(vclimatesettings.rear_zone_left_enabled, climatization_element_settings["zoneRearLeftEnabled"], captured_at)
                     else:
                         # pylint: disable-next=protected-access
                         self.update_boolean(vclimatesettings.rear_zone_left_enabled, None, captured_at)
                     if "zoneRearRightEnabled" in climatization_element_settings and climatization_element_settings["zoneRearRightEnabled"] is not None:
-                        self.update_boolean(vclimatesettings.rear_zone_right_enabled, climatization_element_settings["zoneRearRightEnabled"], captured_at)
                         # pylint: disable-next=protected-access
                         vclimatesettings.rear_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vclimatesettings.rear_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                        self.update_boolean(vclimatesettings.rear_zone_right_enabled, climatization_element_settings["zoneRearRightEnabled"], captured_at)
                     else:
                         self.update_boolean(vclimatesettings.rear_zone_right_enabled, None, captured_at)
                     if (
