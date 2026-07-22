@@ -1114,16 +1114,13 @@ class Connector(BaseConnector):
                             else:
                                 LOG_API.info("Unknown unitInCar %s", climatization_settings["targetTemperature"]["unit"])
                         target_temperature: float = climatization_settings["targetTemperature"]["temperature"]
-                        if preferred_unit == Temperature.C:
-                            min_temperature: Optional[float] = 16
-                            max_temperature: Optional[float] = 29.5
-                        elif preferred_unit == Temperature.F:
-                            min_temperature: Optional[float] = 61
-                            max_temperature: Optional[float] = 85
-                        else:
-                            min_temperature: Optional[float] = None
-                            max_temperature: Optional[float] = None
-                        LOG.debug("Updating target temperature to %s %s", target_temperature, preferred_unit.value)
+                        # Normalize to Celsius for consistent internal representation
+                        if preferred_unit == Temperature.F:
+                            target_temperature = round((target_temperature - 32) * 5 / 9, 1)
+                        # Always use Celsius for min/max so HA bridge displays them correctly
+                        min_temperature: Optional[float] = 16.0
+                        max_temperature: Optional[float] = 29.5
+                        LOG.debug("Updating target temperature to %s °C (API unit: %s)", target_temperature, preferred_unit.value)
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
@@ -1131,7 +1128,7 @@ class Connector(BaseConnector):
                             vehicle.climatization.settings.target_temperature,
                             target_temperature,
                             captured_at,
-                            unit=preferred_unit,
+                            unit=Temperature.C,
                         )
                         vehicle.climatization.settings.target_temperature.minimum = min_temperature
                         vehicle.climatization.settings.target_temperature.maximum = max_temperature
@@ -1777,9 +1774,16 @@ class Connector(BaseConnector):
             precision: float = settings.target_temperature.precision if settings.target_temperature.precision is not None else 0.5
             if isinstance(attribute, TemperatureAttribute) and attribute.id == "target_temperature":
                 value = round(value / precision) * precision
+                # Convert from internal Celsius to car's native unit for the API
+                if settings.unit_in_car == Temperature.F:
+                    value = round((value * 9 / 5 + 32) / precision) * precision
                 setting_dict["targetTemperature"]["temperature"] = value
             else:
-                setting_dict["targetTemperature"]["temperature"] = round(settings.target_temperature.value / precision) * precision
+                api_temp: float = round(settings.target_temperature.value / precision) * precision
+                # Convert from internal Celsius to car's native unit for the API
+                if settings.unit_in_car == Temperature.F:
+                    api_temp = round((api_temp * 9 / 5 + 32) / precision) * precision
+                setting_dict["targetTemperature"]["temperature"] = api_temp
             setting_dict["targetTemperature"]["measurementState"] = "valid"
             if settings.unit_in_car == Temperature.C:
                 setting_dict["targetTemperature"]["unit"] = "celsius"
