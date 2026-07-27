@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.23](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.22...v0.1.23) (2026-07-27)
+
+
+### Bug Fixes
+
+* normalize climate temperature to Celsius for consistent HA display ([64360ac](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/64360acd58c97b5e60f5c968a5fb92f0b4bab1c3))
+* set climate settings as changeable before firing ENABLED event ([ba03aab](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/ba03aabe6058a24a78a11e37410700bd62d199c0))
+
 ## [0.1.22](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.21...v0.1.22) (2026-06-29)
 
 
