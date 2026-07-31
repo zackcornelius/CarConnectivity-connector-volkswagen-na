@@ -67,6 +67,9 @@ class MyVWSession(VWWebSession):
     # myVW Android app version; bump if VW starts rejecting it.
     APP_VERSION: str = "2026.5.27-9076"
 
+    # Required on both token grants since 2026-07-30; VW checks presence, not validity.
+    PLAY_INTEGRITY_TOKEN: str = "unavailable"
+
     def _app_headers(self, content_type: str) -> Dict[str, str]:
         """Headers the myVW Android app sends on its API/token calls."""
         return {
@@ -183,6 +186,7 @@ class MyVWSession(VWWebSession):
         query = parse_qs(url.query)
 
         token_data = {
+            "play_integrity_token": self.PLAY_INTEGRITY_TOKEN,
             "grant_type": "authorization_code",
             "code": query["code"][0],
             "client_id": self.client_id,
@@ -291,7 +295,17 @@ class MyVWSession(VWWebSession):
         if headers is None:
             headers = self._app_headers("application/x-www-form-urlencoded")
 
-        data = {"grant_type": "refresh_token", "client_id": self.client_id, "code_verifier": self.verifier, "refresh_token": self.refresh_token}
+        # VW rejects the refresh grant with 400 unless the original login's verifier is replayed.
+        if not self.verifier:
+            raise AuthenticationError("Refreshing tokens failed: no code_verifier stored for this session, new authorization required")
+
+        data = {
+            "play_integrity_token": self.PLAY_INTEGRITY_TOKEN,
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "code_verifier": self.verifier,
+            "refresh_token": self.refresh_token,
+        }
 
         # Request new tokens using the refresh token
         try:
