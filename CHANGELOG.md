@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.24](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.23...v0.1.24) (2026-07-31)
+
+
+### Bug Fixes
+
+* **auth:** send play_integrity_token on token grants (VW change 2026-07-30) ([b6c90e9](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/b6c90e9c23aea2c1428950d85f0f745d2e4f4b96))
+
 ## [0.1.23](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.22...v0.1.23) (2026-07-27)
 
 
