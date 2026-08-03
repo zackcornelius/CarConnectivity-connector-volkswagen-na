@@ -294,6 +294,33 @@ class OpenIDSession(requests.Session):
             return self.metadata["userId"]
         return None
 
+    @property
+    def backend_user_id(self):
+        """
+        Retrieve the backend-local user ID from the access token's 'sub' claim.
+
+        On the CA backend (ca00), the 'userId' from the login redirect (stored in
+        self.user_id / metadata['userId']) is the global IDP-level SSO ID (ssoid).
+        However, the SpinService and RRS endpoints on ca00 require the backend-local
+        subject identifier, which is the 'sub' claim in the access token JWT.
+
+        These are two different values on ca00, which makes every request that
+        embeds the user id in its path fail with 403 USER_NOT_AUTHORIZED.
+
+        Falls back to self.user_id if the access token is unavailable or cannot
+        be decoded, preserving behaviour on the US backend where both values are
+        the same.
+        """
+        if self.access_token is not None:
+            try:
+                payload = jwt.decode(self.access_token, options={"verify_signature": False})
+                sub = payload.get("sub")
+                if sub:
+                    return sub
+            except (jwt.PyJWTError, TypeError, ValueError) as decode_error:
+                LOG.debug("Could not read 'sub' from access token, falling back to user_id: %s", decode_error)
+        return self.user_id
+
     @user_id.setter
     def user_id(self, new_user_id):
         """
