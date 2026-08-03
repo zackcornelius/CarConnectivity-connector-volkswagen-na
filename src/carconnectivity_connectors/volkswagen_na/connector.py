@@ -464,7 +464,7 @@ class Connector(BaseConnector):
                         else:
                             vehicle.model._set_value(None)  # pylint: disable=protected-access
 
-                        rrs_url = self.base_url + f"/rrs/v1/privileges/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}"
+                        rrs_url = self.base_url + f"/rrs/v1/privileges/user/{self.session.backend_user_id}/vehicle/{vehicle.uuid.value}"
                         try:
                             rrs_response = self.session.get(rrs_url)
                             rrs_data = rrs_response.json()
@@ -1986,7 +1986,7 @@ class Connector(BaseConnector):
                 LOG.warning("S-PIN is missing, please add S-PIN to your configuration or .netrc file")
                 return False
             spin = self.active_config["spin"]
-        url = self.base_url + f"/ss/v1/user/{self.session.user_id}/spin"
+        url = self.base_url + f"/ss/v1/user/{self.session.backend_user_id}/spin"
         payload = {"spin": spin}
         try:
             result = self.session.post(url, data=json.dumps(payload), allow_redirects=True, access_type=AccessType.ACCESS)
@@ -2027,8 +2027,8 @@ class Connector(BaseConnector):
                 LOG.warning("S-PIN is missing, please add S-PIN to your configuration or .netrc file")
                 return None
             spin = self.active_config["spin"]
-        challenge_url = self.base_url + f"/ss/v1/user/{self.session.user_id}/challenge"
-        verify_url = self.base_url + f"/ss/v1/user/{self.session.user_id}/vehicle/{vehicle.uuid.value}/session"
+        challenge_url = self.base_url + f"/ss/v1/user/{self.session.backend_user_id}/challenge"
+        verify_url = self.base_url + f"/ss/v1/user/{self.session.backend_user_id}/vehicle/{vehicle.uuid.value}/session"
         try:
             try:
                 challenge_response: requests.Response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
