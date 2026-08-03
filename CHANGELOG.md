@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.25](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.24...v0.1.25) (2026-08-03)
+
+
+### Bug Fixes
+
+* **lint:** narrow exception and log instead of bare pass ([a5c2217](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/a5c2217091a71ac4d517f7987a53d6c84c882555))
+* **auth:** use backend-local 'sub' as user id on CA endpoints ([f708b54](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/f708b54080ca1712e61c1dc901b1e6429ab1c5e5)), closes [#76](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/issues/76)
+
 ## [0.1.24](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.23...v0.1.24) (2026-07-31)
 
 
