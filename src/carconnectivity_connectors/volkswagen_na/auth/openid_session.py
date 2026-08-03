@@ -317,8 +317,8 @@ class OpenIDSession(requests.Session):
                 sub = payload.get("sub")
                 if sub:
                     return sub
-            except Exception:  # pylint: disable=broad-except
-                pass
+            except (jwt.PyJWTError, TypeError, ValueError) as decode_error:
+                LOG.debug("Could not read 'sub' from access token, falling back to user_id: %s", decode_error)
         return self.user_id
 
     @user_id.setter
