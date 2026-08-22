@@ -474,11 +474,7 @@ class Connector(BaseConnector):
                             LOG.error("Error fetching RRS data for vehicle %s: %s", vehicle.vin, str(err))
                             rrs_data = None
 
-                        if (
-                            rrs_data
-                            and "data" in rrs_data
-                            and rrs_data["data"] is not None
-                        ):
+                        if rrs_data and "data" in rrs_data and rrs_data["data"] is not None:
                             # Extract TSP (Telematics Service Provider) for this vehicle.
                             # "WCT" = WirelessCar (MEB/EV platform), "ATC" = Aeris (ICE/Atlas platform).
                             if "tsp" in rrs_data["data"]:
@@ -561,7 +557,7 @@ class Connector(BaseConnector):
 
                         # Add remote start command for ICE/hybrid vehicles with RST capability
                         has_remote_start: bool = vehicle.capabilities.has_capability("RemoteStart:ALL", check_status_ok=True)
-                        LOG.debug("Vehicle %s has remote start capability: %s (tsp=%s)", vehicle.vin, has_remote_start, getattr(vehicle, 'tsp', None))
+                        LOG.debug("Vehicle %s has remote start capability: %s (tsp=%s)", vehicle.vin, has_remote_start, getattr(vehicle, "tsp", None))
                         if has_remote_start:
                             if vehicle.commands is not None and vehicle.commands.commands is not None and not vehicle.commands.contains_command("remote-start"):
                                 remote_start_command = RemoteStartCommand(parent=vehicle.commands)
@@ -1945,9 +1941,7 @@ class Connector(BaseConnector):
 
         return atc_token, ro_token
 
-    def __on_remote_start_stop(
-        self, remote_start_command: RemoteStartCommand, command_arguments: Union[str, Dict[str, Any]]
-    ) -> Union[str, Dict[str, Any]]:
+    def __on_remote_start_stop(self, remote_start_command: RemoteStartCommand, command_arguments: Union[str, Dict[str, Any]]) -> Union[str, Dict[str, Any]]:
         """Handle remote engine start/stop command for ICE/hybrid vehicles."""
         if (
             remote_start_command.parent is None
@@ -1976,9 +1970,7 @@ class Connector(BaseConnector):
             if command_arguments["command"] == RemoteStartCommand.Command.START:
                 LOG.info("RST: Starting engine for vehicle %s", vin)
                 rst_body = {"roToken": ro_token}
-                command_response: requests.Response = self.session.post(
-                    rst_url, data=json.dumps(rst_body), allow_redirects=True, token=atc_token
-                )
+                command_response: requests.Response = self.session.post(rst_url, data=json.dumps(rst_body), allow_redirects=True, token=atc_token)
             elif command_arguments["command"] == RemoteStartCommand.Command.STOP:
                 LOG.info("RST: Stopping engine for vehicle %s", vin)
                 command_response = self.session.delete(rst_url, allow_redirects=True, token=atc_token)
