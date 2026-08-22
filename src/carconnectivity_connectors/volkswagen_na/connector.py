@@ -67,6 +67,7 @@ from carconnectivity_connectors.volkswagen_na.auth.session_manager import Sessio
 from carconnectivity_connectors.volkswagen_na.auth.myvw_session import MyVWSession
 from carconnectivity_connectors.volkswagen_na.auth.openid_session import AccessType
 from carconnectivity_connectors.volkswagen_na.vehicle import VolkswagenNAVehicle, VolkswagenNAElectricVehicle, VolkswagenNACombustionVehicle
+from carconnectivity_connectors.volkswagen_na.command_impl import RemoteStartCommand
 from carconnectivity_connectors.volkswagen_na.climatization import VolkswagenClimatization
 from carconnectivity_connectors.volkswagen_na.capability import Capability
 from carconnectivity_connectors.volkswagen_na._version import __version__
@@ -477,6 +478,17 @@ class Connector(BaseConnector):
                             rrs_data
                             and "data" in rrs_data
                             and rrs_data["data"] is not None
+                        ):
+                            # Extract TSP (Telematics Service Provider) for this vehicle.
+                            # "WCT" = WirelessCar (MEB/EV platform), "ATC" = Aeris (ICE/Atlas platform).
+                            if "tsp" in rrs_data["data"]:
+                                vehicle.tsp = rrs_data["data"]["tsp"]
+                                LOG.debug("Vehicle %s TSP: %s", vehicle.vin, vehicle.tsp)
+
+                        if (
+                            rrs_data
+                            and "data" in rrs_data
+                            and rrs_data["data"] is not None
                             and "services" in rrs_data["data"]
                             and rrs_data["data"]["services"] is not None
                         ):
@@ -546,6 +558,16 @@ class Connector(BaseConnector):
                                 lock_unlock_command._add_on_set_hook(self.__on_lock_unlock)  # pylint: disable=protected-access
                                 lock_unlock_command.enabled = True
                                 vehicle.doors.commands.add_command(lock_unlock_command)
+
+                        # Add remote start command for ICE/hybrid vehicles with RST capability
+                        has_remote_start: bool = vehicle.capabilities.has_capability("RemoteStart:ALL", check_status_ok=True)
+                        LOG.debug("Vehicle %s has remote start capability: %s (tsp=%s)", vehicle.vin, has_remote_start, getattr(vehicle, 'tsp', None))
+                        if has_remote_start:
+                            if vehicle.commands is not None and vehicle.commands.commands is not None and not vehicle.commands.contains_command("remote-start"):
+                                remote_start_command = RemoteStartCommand(parent=vehicle.commands)
+                                remote_start_command._add_on_set_hook(self.__on_remote_start_stop)  # pylint: disable=protected-access
+                                remote_start_command.enabled = True
+                                vehicle.commands.add_command(remote_start_command)
 
                         if SUPPORT_IMAGES:
                             # fetch vehcile images
@@ -1487,9 +1509,9 @@ class Connector(BaseConnector):
                             charging_settings["maxChargingCurrent"] = 32.0
                         else:
                             charging_settings["maxChargingCurrent"] = 10.0
-                        vehicle.charging.settings.maximum_current.minimum = 10.0
+                        vehicle.charging.settings.maximum_current.minimum = 6.0
                         vehicle.charging.settings.maximum_current.maximum = 32.0
-                        vehicle.charging.settings.maximum_current.precision = 22.0
+                        vehicle.charging.settings.maximum_current.precision = 1.0
                         # pylint: disable-next=protected-access
                         vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
                         vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
@@ -1848,6 +1870,141 @@ class Connector(BaseConnector):
             raise SetterError(f"Retrying failed: {retry_error}") from retry_error
         return value
 
+    def __get_ro_token(self, vehicle: VolkswagenNAVehicle) -> tuple:
+        """
+        Obtain a Remote Operation (RO) token for RST (Remote Start) commands.
+
+        Implements a two-challenge flow specific to ATC (Aeris/ICE) vehicles:
+          1. Fetch challenge1 → compute spinHash1 → POST session → get ATC carnetVehicleToken
+          2. Fetch challenge2 → compute spinHash2 → POST climateControl/check → get roToken
+
+        Each challenge is single-use. The session endpoint consumes challenge1,
+        so we must fetch a second challenge for climateControl/check.
+
+        Returns:
+            Tuple of (atc_token, ro_token).
+
+        Raises:
+            CommandError: If any step fails.
+        """
+        spin = self.active_config.get("spin")
+        if not spin:
+            raise CommandError("S-PIN is required for remote start. Add it to your configuration or .netrc file.")
+
+        vuuid = vehicle.uuid.value
+        if vuuid is None:
+            raise CommandError("Vehicle UUID is missing")
+
+        challenge_url = self.base_url + f"/ss/v1/user/{self.session.backend_user_id}/challenge"
+        session_url = self.base_url + f"/ss/v1/user/{self.session.backend_user_id}/vehicle/{vuuid}/session"
+        check_url = self.base_url + f"/ss/v1/user/{self.session.backend_user_id}/vehicle/{vuuid}/operation/climateControl/check"
+
+        tsp = vehicle.tsp or "WCT"
+
+        # Step 1: First challenge → ATC session token
+        LOG.debug("RST: Fetching challenge1 for ATC session")
+        challenge1_response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
+        challenge1_data = challenge1_response.json()
+        challenge1 = challenge1_data["data"]["challenge"]
+        remaining = challenge1_data["data"].get("remainingTries", 999)
+        if remaining < 3:
+            raise CommandError(f"RST: Only {remaining} SPIN tries remaining, aborting for safety")
+
+        spin_hash1 = hashlib.sha512(f"{challenge1}.{spin}".encode("utf-8")).hexdigest().upper()
+        session_body = {"idToken": self.session.id_token, "spinHash": spin_hash1, "tsp": tsp}
+        LOG.debug("RST: Posting ATC session request (tsp=%s)", tsp)
+        session_response = self.session.post(session_url, data=json.dumps(session_body), allow_redirects=True, access_type=AccessType.ACCESS)
+        if session_response.status_code != requests.codes["ok"]:
+            raise CommandError(f"RST: ATC session request failed ({session_response.status_code}: {session_response.text})")
+
+        atc_token = session_response.json()["data"]["carnetVehicleToken"]
+        LOG.debug("RST: Got ATC carnetVehicleToken")
+
+        # Step 2: Second challenge → climateControl/check → roToken
+        LOG.debug("RST: Fetching challenge2 for climateControl/check")
+        challenge2_response = self.session.get(challenge_url, access_type=AccessType.ACCESS)
+        challenge2_data = challenge2_response.json()
+        challenge2 = challenge2_data["data"]["challenge"]
+
+        spin_hash2 = hashlib.sha512(f"{challenge2}.{spin}".encode("utf-8")).hexdigest().upper()
+        check_body = {"spinHash": spin_hash2}
+        LOG.debug("RST: Posting climateControl/check for roToken")
+        check_response = self.session.post(check_url, data=json.dumps(check_body), allow_redirects=True, token=atc_token)
+        if check_response.status_code != requests.codes["ok"]:
+            raise CommandError(f"RST: climateControl/check failed ({check_response.status_code}: {check_response.text})")
+
+        ro_token = check_response.json()["data"]["roToken"]
+        LOG.debug("RST: Got roToken (length=%d)", len(ro_token))
+
+        vehicle.spin_token = atc_token
+        try:
+            data = jwt.decode(atc_token, options={"verify_signature": False})
+            vehicle.spin_token_expiry = datetime.fromtimestamp(data["exp"], tz=timezone.utc)
+        except Exception:
+            vehicle.spin_token_expiry = None
+
+        return atc_token, ro_token
+
+    def __on_remote_start_stop(
+        self, remote_start_command: RemoteStartCommand, command_arguments: Union[str, Dict[str, Any]]
+    ) -> Union[str, Dict[str, Any]]:
+        """Handle remote engine start/stop command for ICE/hybrid vehicles."""
+        if (
+            remote_start_command.parent is None
+            or remote_start_command.parent.parent is None
+            or not isinstance(remote_start_command.parent.parent, VolkswagenNAVehicle)
+        ):
+            raise CommandError("Object hierarchy is not as expected")
+        if not isinstance(command_arguments, dict):
+            raise CommandError("Command arguments are not a dictionary")
+
+        vehicle: VolkswagenNAVehicle = remote_start_command.parent.parent
+        vin: Optional[str] = vehicle.vin.value
+        vuuid: Optional[str] = vehicle.uuid.value
+        if vin is None:
+            raise CommandError("VIN in object hierarchy missing")
+        if vuuid is None:
+            raise CommandError("UUID in object hierarchy missing")
+        if "command" not in command_arguments:
+            raise CommandError("Command argument missing")
+
+        rst_url = self.base_url + f"/rst/v1/vehicle/{vuuid}"
+
+        try:
+            atc_token, ro_token = self.__get_ro_token(vehicle)
+
+            if command_arguments["command"] == RemoteStartCommand.Command.START:
+                LOG.info("RST: Starting engine for vehicle %s", vin)
+                rst_body = {"roToken": ro_token}
+                command_response: requests.Response = self.session.post(
+                    rst_url, data=json.dumps(rst_body), allow_redirects=True, token=atc_token
+                )
+            elif command_arguments["command"] == RemoteStartCommand.Command.STOP:
+                LOG.info("RST: Stopping engine for vehicle %s", vin)
+                command_response = self.session.delete(rst_url, allow_redirects=True, token=atc_token)
+            else:
+                raise CommandError(f"Unknown remote start command: {command_arguments['command']}")
+
+            if command_response.status_code != requests.codes["ok"]:
+                LOG.error("RST: Command failed (%s: %s)", command_response.status_code, command_response.text)
+                raise CommandError(f"Remote start command failed ({command_response.status_code}: {command_response.text})")
+
+            response_data = command_response.json()
+            correlation_id = response_data.get("correlationId")
+            LOG.info("RST: Command accepted, correlationId=%s", correlation_id)
+
+        except requests.exceptions.ConnectionError as connection_error:
+            raise CommandError(
+                f"Connection error: {connection_error}. If this happens frequently, please check if other applications communicate with the Volkswagen server."
+            ) from connection_error
+        except requests.exceptions.ChunkedEncodingError as chunked_encoding_error:
+            raise CommandError(f"Error: {chunked_encoding_error}") from chunked_encoding_error
+        except requests.exceptions.ReadTimeout as timeout_error:
+            raise CommandError(f"Timeout during read: {timeout_error}") from timeout_error
+        except requests.exceptions.RetryError as retry_error:
+            raise CommandError(f"Retrying failed: {retry_error}") from retry_error
+        return command_arguments
+
     def __on_air_conditioning_start_stop(
         self, start_stop_command: ClimatizationStartStopCommand, command_arguments: Union[str, Dict[str, Any]]
     ) -> Union[str, Dict[str, Any]]:
@@ -2077,8 +2234,9 @@ class Connector(BaseConnector):
                 return None
             verify_string = challenge_string + "." + spin
             verify_hash = hashlib.sha512(verify_string.encode("utf-8")).hexdigest().upper()
-            # Use country-specific TSP
-            tsp = "WCT"
+            # Use vehicle-specific TSP from RRS data.
+            # "WCT" = WirelessCar (MEB/EV), "ATC" = Aeris (ICE, e.g. Atlas).
+            tsp = vehicle.tsp or "WCT"
             verify_data = {"idToken": self.session.id_token, "spinHash": verify_hash, "tsp": tsp}
             verify_response: requests.Response = self.session.post(
                 verify_url, data=json.dumps(verify_data), allow_redirects=True, access_type=AccessType.ACCESS

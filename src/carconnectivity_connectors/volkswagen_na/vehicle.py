@@ -40,6 +40,7 @@ class VolkswagenNAVehicle(GenericVehicle):  # pylint: disable=too-many-instance-
 
     spin_token: Optional[str] = None
     spin_token_expiry: Optional[datetime] = None
+    tsp: Optional[str] = None  # Telematics Service Provider: "WCT" (WirelessCar/MEB) or "ATC" (Aeris/ICE)
 
     def __init__(
         self,
@@ -59,6 +60,7 @@ class VolkswagenNAVehicle(GenericVehicle):  # pylint: disable=too-many-instance-
             self.uuid.parent = self
             self.spin_token = origin.spin_token
             self.spin_token_expiry = origin.spin_token_expiry
+            self.tsp = origin.tsp
             if SUPPORT_IMAGES:
                 self._car_images = origin._car_images
         else:
