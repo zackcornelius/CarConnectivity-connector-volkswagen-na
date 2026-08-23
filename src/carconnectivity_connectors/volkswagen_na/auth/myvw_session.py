@@ -67,8 +67,17 @@ class MyVWSession(VWWebSession):
     # myVW Android app version; bump if VW starts rejecting it.
     APP_VERSION: str = "2026.5.27-9076"
 
-    # Required on both token grants since 2026-07-30; VW checks presence, not validity.
+    # Required on both token grants since 2026-07-30; VW checks presence, not validity (CA).
+    # US endpoint validates the token — use set_play_integrity_token() to supply a real one
+    # from an external relay.
     PLAY_INTEGRITY_TOKEN: str = "unavailable"
+
+    def set_play_integrity_token(self, token: str) -> None:
+        """Update the Play Integrity token used in token grant requests.
+        Called by the connector when a relay supplies a real PI token via MQTT."""
+        if token and token != "unavailable":
+            self.PLAY_INTEGRITY_TOKEN = token
+            LOG.info("Play Integrity token updated (len=%d)", len(token))
 
     def _app_headers(self, content_type: str) -> Dict[str, str]:
         """Headers the myVW Android app sends on its API/token calls."""

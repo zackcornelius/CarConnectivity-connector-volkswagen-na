@@ -219,6 +219,10 @@ class Connector(BaseConnector):
         self.session.retries = 3
         self.session.timeout = 180
 
+        # Accept a Play Integrity token from config (e.g. relayed from an external source)
+        if "play_integrity_token" in config and config["play_integrity_token"]:
+            self.session.set_play_integrity_token(config["play_integrity_token"])
+
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
