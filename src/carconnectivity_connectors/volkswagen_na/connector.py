@@ -1505,9 +1505,9 @@ class Connector(BaseConnector):
                             charging_settings["maxChargingCurrent"] = 32.0
                         else:
                             charging_settings["maxChargingCurrent"] = 10.0
-                        vehicle.charging.settings.maximum_current.minimum = 6.0
+                        vehicle.charging.settings.maximum_current.minimum = 10.0
                         vehicle.charging.settings.maximum_current.maximum = 32.0
-                        vehicle.charging.settings.maximum_current.precision = 1.0
+                        vehicle.charging.settings.maximum_current.precision = 22.0
                         # pylint: disable-next=protected-access
                         vehicle.charging.settings.maximum_current._add_on_set_hook(self.__on_charging_settings_change)
                         vehicle.charging.settings.maximum_current._is_changeable = True  # pylint: disable=protected-access
