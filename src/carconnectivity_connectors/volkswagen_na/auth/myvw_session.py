@@ -75,7 +75,7 @@ class MyVWSession(VWWebSession):
     def set_play_integrity_token(self, token: str) -> None:
         """Update the Play Integrity token used in token grant requests.
         Called by the connector when a relay supplies a real PI token via MQTT."""
-        if token and token != "unavailable":
+        if token and token != "unavailable":  # nosec B105 — not a password, sentinel for "no PI token"
             self.PLAY_INTEGRITY_TOKEN = token
             LOG.info("Play Integrity token updated (len=%d)", len(token))
 
