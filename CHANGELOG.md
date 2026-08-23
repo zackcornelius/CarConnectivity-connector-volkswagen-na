@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+# [0.2.0](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.25...v0.2.0) (2026-08-23)
+
+
+### Bug Fixes
+
+* revert charging current to min=10/max=32/precision=22 ([490ee9b](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/490ee9b78e8fc03a45ff94c866ce2ceb9ca3773c)), closes [#69](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/issues/69)
+* suppress bandit B105 false positive on PI sentinel value ([f861d18](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/f861d18458865e4d3aafb5f0b96a12bbebf87aa2))
+
+
+### Features
+
+* accept Play Integrity token from config/relay ([26fa293](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/26fa2933f3b122b7de3ac516c094d72299aea171))
+* add remote engine start/stop for ICE/hybrid vehicles ([58cd020](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/58cd020eb2adf1eed720d557b0f4ee04f2e7e379))
+
 ## [0.1.25](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.24...v0.1.25) (2026-08-03)
 
 
