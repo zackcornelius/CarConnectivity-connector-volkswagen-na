@@ -257,15 +257,16 @@ class Connector(BaseConnector):
     def _start_pi_mqtt_via_plugin(self) -> None:
         """Subscribe to the PI token relay topic through the MQTT plugin's existing connection."""
         import time  # pylint: disable=import-outside-toplevel
+
         topic = self._pi_mqtt_topic
         # Wait for the MQTT plugin to connect
         for attempt in range(30):
             if self._stop_event.is_set():
                 return
             mqtt_plugin = None
-            if hasattr(self.car_connectivity, 'plugins') and hasattr(self.car_connectivity.plugins, 'plugins'):
+            if hasattr(self.car_connectivity, "plugins") and hasattr(self.car_connectivity.plugins, "plugins"):
                 for plugin in self.car_connectivity.plugins.plugins.values():
-                    if hasattr(plugin, 'mqtt_client') and hasattr(plugin.mqtt_client, 'subscribe'):
+                    if hasattr(plugin, "mqtt_client") and hasattr(plugin.mqtt_client, "subscribe"):
                         mqtt_plugin = plugin
                         break
             if mqtt_plugin is not None and mqtt_plugin.mqtt_client.is_connected():
@@ -294,6 +295,7 @@ class Connector(BaseConnector):
     def _start_pi_mqtt_delayed(self) -> None:
         """Wait briefly for the MQTT broker to be fully ready, then connect."""
         import time  # pylint: disable=import-outside-toplevel
+
         time.sleep(10)
         if not self._stop_event.is_set():
             self._start_pi_mqtt()
