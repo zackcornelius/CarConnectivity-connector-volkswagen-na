@@ -258,15 +258,18 @@ class Connector(BaseConnector):
         username = self._pi_mqtt_config.get("username")
         password = self._pi_mqtt_config.get("password")
 
-        # paho-mqtt v2 requires CallbackAPIVersion; v1 does not have it
+        # paho-mqtt v2 requires CallbackAPIVersion and changed the default protocol to MQTTv5;
+        # we force MQTTv311 for broad broker compatibility.
         try:
             client = paho_mqtt.Client(
                 callback_api_version=paho_mqtt.CallbackAPIVersion.VERSION1,
                 client_id="carconnectivity-pi-relay",
+                protocol=paho_mqtt.MQTTv311,
                 clean_session=True,
             )
         except (AttributeError, TypeError):
-            client = paho_mqtt.Client(client_id="carconnectivity-pi-relay", clean_session=True)
+            # paho-mqtt v1.x
+            client = paho_mqtt.Client(client_id="carconnectivity-pi-relay", protocol=paho_mqtt.MQTTv311, clean_session=True)
         if username:
             client.username_pw_set(username, password)
 
@@ -281,7 +284,7 @@ class Connector(BaseConnector):
             try:
                 payload = json.loads(msg.payload.decode("utf-8"))
                 pi_token = payload.get("play_integrity_token")
-                if pi_token and pi_token != "unavailable":
+                if pi_token and pi_token != "unavailable":  # nosec B105
                     self.session.set_play_integrity_token(pi_token)
                     LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
                 else:
