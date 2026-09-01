@@ -223,13 +223,94 @@ class Connector(BaseConnector):
         if "play_integrity_token" in config and config["play_integrity_token"]:
             self.session.set_play_integrity_token(config["play_integrity_token"])
 
+        # Optional MQTT-based Play Integrity token relay
+        # Allows dynamic PI token updates from an external relay (e.g. vw-token-relay add-on)
+        self._pi_mqtt_client = None
+        pi_mqtt_config = config.get("play_integrity_mqtt")
+        if isinstance(pi_mqtt_config, dict) and pi_mqtt_config.get("broker"):
+            self._pi_mqtt_config = pi_mqtt_config
+        else:
+            self._pi_mqtt_config = None
+
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
+        self._start_pi_mqtt()
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.name = "carconnectivity.connectors.volkswagen-background"
         self._background_thread.start()
         self.healthy._set_value(value=True)  # pylint: disable=protected-access
+
+    # ── Play Integrity MQTT relay ────────────────────────────────────
+    def _start_pi_mqtt(self) -> None:
+        """Start an MQTT client to receive Play Integrity tokens from an external relay."""
+        if self._pi_mqtt_config is None:
+            return
+        try:
+            import paho.mqtt.client as paho_mqtt  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            LOG.warning("play_integrity_mqtt configured but paho-mqtt is not installed — PI token relay disabled")
+            return
+
+        broker = self._pi_mqtt_config["broker"]
+        port = int(self._pi_mqtt_config.get("port", 1883))
+        topic = self._pi_mqtt_config.get("topic", "vw/token_relay")
+        username = self._pi_mqtt_config.get("username")
+        password = self._pi_mqtt_config.get("password")
+
+        # paho-mqtt v2 requires CallbackAPIVersion; v1 does not have it
+        try:
+            client = paho_mqtt.Client(
+                callback_api_version=paho_mqtt.CallbackAPIVersion.VERSION1,
+                client_id="carconnectivity-pi-relay",
+                clean_session=True,
+            )
+        except (AttributeError, TypeError):
+            client = paho_mqtt.Client(client_id="carconnectivity-pi-relay", clean_session=True)
+        if username:
+            client.username_pw_set(username, password)
+
+        def on_connect(client, userdata, flags, rc):
+            if rc == 0:
+                LOG.info("PI relay MQTT connected to %s:%d, subscribing to %s", broker, port, topic)
+                client.subscribe(topic, qos=1)
+            else:
+                LOG.error("PI relay MQTT connection failed: rc=%d", rc)
+
+        def on_message(client, userdata, msg):
+            try:
+                payload = json.loads(msg.payload.decode("utf-8"))
+                pi_token = payload.get("play_integrity_token")
+                if pi_token and pi_token != "unavailable":
+                    self.session.set_play_integrity_token(pi_token)
+                    LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
+                else:
+                    LOG.debug("PI relay message received but no valid play_integrity_token in payload")
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                LOG.warning("PI relay: could not parse MQTT message: %s", err)
+
+        def on_disconnect(client, userdata, rc):
+            if rc != 0:
+                LOG.warning("PI relay MQTT disconnected unexpectedly (rc=%d), will auto-reconnect", rc)
+
+        client.on_connect = on_connect
+        client.on_message = on_message
+        client.on_disconnect = on_disconnect
+        client.connect_async(broker, port, keepalive=60)
+        client.loop_start()
+        self._pi_mqtt_client = client
+        LOG.info("PI relay MQTT client started (broker=%s, topic=%s)", broker, topic)
+
+    def _stop_pi_mqtt(self) -> None:
+        """Stop the PI relay MQTT client if running."""
+        if self._pi_mqtt_client is not None:
+            try:
+                self._pi_mqtt_client.loop_stop()
+                self._pi_mqtt_client.disconnect()
+                LOG.info("PI relay MQTT client stopped")
+            except Exception as err:
+                LOG.warning("Error stopping PI relay MQTT client: %s", err)
+            self._pi_mqtt_client = None
 
     def _background_loop(self) -> None:
         self._stop_event.clear()
@@ -301,6 +382,7 @@ class Connector(BaseConnector):
         Returns:
             None
         """
+        self._stop_pi_mqtt()
         # Disable and remove all vehicles managed soley by this connector
         for vehicle in self.car_connectivity.garage.list_vehicles():
             if len(vehicle.managing_connectors) == 1 and self in vehicle.managing_connectors:

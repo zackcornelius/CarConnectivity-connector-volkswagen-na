@@ -40,6 +40,9 @@ Repository = "https://github.com/zackcornelius/CarConnectivity-connector-volkswa
 Issues = "https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/issues"
 Changelog = "https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/blob/main/CHANGELOG.md"
 
+[project.optional-dependencies]
+mqtt = ["paho-mqtt>=1.6,<3"]
+
 [dependency-groups]
 dev = [
     "pre-commit",
