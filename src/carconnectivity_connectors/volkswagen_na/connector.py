@@ -226,22 +226,78 @@ class Connector(BaseConnector):
         # Optional MQTT-based Play Integrity token relay
         # Allows dynamic PI token updates from an external relay (e.g. vw-token-relay add-on)
         self._pi_mqtt_client = None
+        self._pi_mqtt_topic = None
         pi_mqtt_config = config.get("play_integrity_mqtt")
-        if isinstance(pi_mqtt_config, dict) and pi_mqtt_config.get("broker"):
-            self._pi_mqtt_config = pi_mqtt_config
+        if isinstance(pi_mqtt_config, dict):
+            if pi_mqtt_config.get("broker"):
+                self._pi_mqtt_config = pi_mqtt_config
+            elif pi_mqtt_config.get("topic"):
+                # topic-only mode: subscribe via the MQTT plugin's existing connection
+                self._pi_mqtt_config = None
+                self._pi_mqtt_topic = pi_mqtt_config["topic"]
+            else:
+                self._pi_mqtt_config = None
         else:
             self._pi_mqtt_config = None
 
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
-        self._start_pi_mqtt()
+        # Start PI MQTT relay — either standalone client or via the MQTT plugin's connection
+        if self._pi_mqtt_config is not None:
+            threading.Thread(target=self._start_pi_mqtt_delayed, daemon=True, name="pi-mqtt-startup").start()
+        elif self._pi_mqtt_topic is not None:
+            threading.Thread(target=self._start_pi_mqtt_via_plugin, daemon=True, name="pi-mqtt-plugin").start()
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
         self._background_thread.name = "carconnectivity.connectors.volkswagen-background"
         self._background_thread.start()
         self.healthy._set_value(value=True)  # pylint: disable=protected-access
 
     # ── Play Integrity MQTT relay ────────────────────────────────────
+    def _start_pi_mqtt_via_plugin(self) -> None:
+        """Subscribe to the PI token relay topic through the MQTT plugin's existing connection."""
+        import time  # pylint: disable=import-outside-toplevel
+        topic = self._pi_mqtt_topic
+        # Wait for the MQTT plugin to connect
+        for attempt in range(30):
+            if self._stop_event.is_set():
+                return
+            mqtt_plugin = None
+            if hasattr(self.car_connectivity, 'plugins') and hasattr(self.car_connectivity.plugins, 'plugins'):
+                for plugin in self.car_connectivity.plugins.plugins.values():
+                    if hasattr(plugin, 'mqtt_client') and hasattr(plugin.mqtt_client, 'subscribe'):
+                        mqtt_plugin = plugin
+                        break
+            if mqtt_plugin is not None and mqtt_plugin.mqtt_client.is_connected():
+                break
+            time.sleep(2)
+        else:
+            LOG.warning("PI relay: MQTT plugin not found or not connected after 60s — PI token relay disabled")
+            return
+
+        def _on_pi_message(client, userdata, msg):
+            try:
+                payload = json.loads(msg.payload.decode("utf-8"))
+                pi_token = payload.get("play_integrity_token")
+                if pi_token and pi_token != "unavailable":  # nosec B105
+                    self.session.set_play_integrity_token(pi_token)
+                    LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
+                else:
+                    LOG.debug("PI relay message received but no valid play_integrity_token in payload")
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                LOG.warning("PI relay: could not parse MQTT message: %s", err)
+
+        mqtt_plugin.mqtt_client.message_callback_add(topic, _on_pi_message)
+        mqtt_plugin.mqtt_client.subscribe(topic, qos=1)
+        LOG.info("PI relay subscribed to %s via MQTT plugin", topic)
+
+    def _start_pi_mqtt_delayed(self) -> None:
+        """Wait briefly for the MQTT broker to be fully ready, then connect."""
+        import time  # pylint: disable=import-outside-toplevel
+        time.sleep(10)
+        if not self._stop_event.is_set():
+            self._start_pi_mqtt()
+
     def _start_pi_mqtt(self) -> None:
         """Start an MQTT client to receive Play Integrity tokens from an external relay."""
         if self._pi_mqtt_config is None:
@@ -260,16 +316,17 @@ class Connector(BaseConnector):
 
         # paho-mqtt v2 requires CallbackAPIVersion and changed the default protocol to MQTTv5;
         # we force MQTTv311 for broad broker compatibility.
+        # Use empty client_id for auto-generation — some brokers cache auth failures by client_id.
         try:
             client = paho_mqtt.Client(
                 callback_api_version=paho_mqtt.CallbackAPIVersion.VERSION1,
-                client_id="carconnectivity-pi-relay",
+                client_id="",
                 protocol=paho_mqtt.MQTTv311,
                 clean_session=True,
             )
         except (AttributeError, TypeError):
             # paho-mqtt v1.x
-            client = paho_mqtt.Client(client_id="carconnectivity-pi-relay", protocol=paho_mqtt.MQTTv311, clean_session=True)
+            client = paho_mqtt.Client(client_id="", protocol=paho_mqtt.MQTTv311, clean_session=True)
         if username:
             client.username_pw_set(username, password)
 
@@ -299,7 +356,11 @@ class Connector(BaseConnector):
         client.on_connect = on_connect
         client.on_message = on_message
         client.on_disconnect = on_disconnect
-        client.connect_async(broker, port, keepalive=60)
+        try:
+            client.connect(broker, port, keepalive=60)
+        except OSError as err:
+            LOG.warning("PI relay MQTT initial connection failed: %s — will retry in background", err)
+            client.connect_async(broker, port, keepalive=60)
         client.loop_start()
         self._pi_mqtt_client = client
         LOG.info("PI relay MQTT client started (broker=%s, topic=%s)", broker, topic)
