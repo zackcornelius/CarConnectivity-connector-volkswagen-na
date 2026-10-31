@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+# [0.3.0](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.2.0...v0.3.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* suppress bandit B105 false positive on PI sentinel comparison ([2e75db6](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/2e75db638ed6167cb34e7a78998b418723ba29e1))
+
+
+### Features
+
+* add MQTT plugin-based PI token relay mode ([4be0323](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/4be0323f6121ae44c7d064168eb79b0f55784c52))
+* add MQTT-based Play Integrity token relay support ([219e403](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/219e40306d3697411ed4d5df08116a5ee804cca8))
+
 # [0.2.0](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.1.25...v0.2.0) (2026-08-23)
 
 
