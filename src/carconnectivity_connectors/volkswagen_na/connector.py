@@ -225,20 +225,42 @@ class Connector(BaseConnector):
 
         # Optional MQTT-based Play Integrity token relay
         # Allows dynamic PI token updates from an external relay (e.g. vw-token-relay add-on)
+        #
+        # If the CarConnectivity MQTT plugin is enabled, the relay reuses the plugin's existing
+        # MQTT connection — no broker details are needed in the connector config, e.g.:
+        #   "play_integrity_mqtt": {"topic": "vw/token_relay"}
+        # or simply:
+        #   "play_integrity_mqtt": {"enabled": true}
+        # An explicit "broker" in the config always overrides this and starts a standalone client.
         self._pi_mqtt_client = None
         self._pi_mqtt_topic = None
+        self.PI_RELAY_DEFAULT_TOPIC = "vw/token_relay"
         pi_mqtt_config = config.get("play_integrity_mqtt")
-        if isinstance(pi_mqtt_config, dict):
-            if pi_mqtt_config.get("broker"):
-                self._pi_mqtt_config = pi_mqtt_config
-            elif pi_mqtt_config.get("topic"):
-                # topic-only mode: subscribe via the MQTT plugin's existing connection
-                self._pi_mqtt_config = None
-                self._pi_mqtt_topic = pi_mqtt_config["topic"]
+        if not isinstance(pi_mqtt_config, dict):
+            # Allow a plain string as a shortcut for the relay topic
+            if isinstance(pi_mqtt_config, str) and pi_mqtt_config:
+                pi_mqtt_config = {"topic": pi_mqtt_config}
+            elif pi_mqtt_config is True:
+                pi_mqtt_config = {"enabled": True}
             else:
-                self._pi_mqtt_config = None
+                pi_mqtt_config = None
+        if pi_mqtt_config is not None and pi_mqtt_config.get("enabled") is False:
+            pi_mqtt_config = None
+            relay_disabled = True
+        else:
+            relay_disabled = False
+        if pi_mqtt_config is not None and pi_mqtt_config.get("broker"):
+            # Explicit broker details in the connector config: standalone MQTT client
+            self._pi_mqtt_config = pi_mqtt_config
         else:
             self._pi_mqtt_config = None
+            # No explicit broker: subscribe via the MQTT plugin's existing connection.
+            # Activated by "enabled" or "topic" in the config, or automatically when the
+            # MQTT plugin is enabled in the CarConnectivity configuration.
+            # An explicit "enabled": false always disables the relay, even with the plugin present.
+            relay_requested = not relay_disabled and (pi_mqtt_config is not None or self._mqtt_plugin_configured())
+            if relay_requested:
+                self._pi_mqtt_topic = (pi_mqtt_config or {}).get("topic", self.PI_RELAY_DEFAULT_TOPIC)
 
         self._elapsed: List[timedelta] = []
 
@@ -254,25 +276,54 @@ class Connector(BaseConnector):
         self.healthy._set_value(value=True)  # pylint: disable=protected-access
 
     # ── Play Integrity MQTT relay ────────────────────────────────────
-    def _start_pi_mqtt_via_plugin(self) -> None:
-        """Subscribe to the PI token relay topic through the MQTT plugin's existing connection."""
+    def _mqtt_plugin_configured(self) -> bool:
+        """Check whether the CarConnectivity MQTT plugin is enabled in the global configuration.
+
+        The core instantiates connectors before plugins, so this inspects the raw
+        configuration instead of the (still empty) plugin registry.
+        """
+        config = getattr(self.car_connectivity, "config", None)
+        if not isinstance(config, dict):
+            return False
+        for plugin_config in config.get("carConnectivity", {}).get("plugins", []):
+            if not isinstance(plugin_config, dict):
+                continue
+            if plugin_config.get("disabled"):
+                continue
+            plugin_type = str(plugin_config.get("type", ""))
+            if "mqtt" in plugin_type.lower():
+                return True
+        return False
+
+    def _find_mqtt_plugin(self):
+        """Locate the CarConnectivity MQTT plugin instance, if enabled.
+
+        Waits up to 60s for the plugin to appear and connect, polling every 2 seconds
+        (aborted early if the connector is shutting down). Returns the plugin instance
+        once its MQTT client is connected, or None.
+        """
         import time  # pylint: disable=import-outside-toplevel
 
+        for _ in range(30):
+            if self._stop_event.is_set():
+                return None
+            plugins = getattr(getattr(self.car_connectivity, "plugins", None), "plugins", None)
+            if plugins:
+                for plugin in plugins.values():
+                    mqtt_client = getattr(plugin, "mqtt_client", None)
+                    if mqtt_client is not None and hasattr(mqtt_client, "subscribe") and mqtt_client.is_connected():
+                        return plugin
+            time.sleep(2)
+        return None
+
+    def _start_pi_mqtt_via_plugin(self) -> None:
+        """Subscribe to the PI token relay topic through the MQTT plugin's existing connection."""
         topic = self._pi_mqtt_topic
-        # Wait for the MQTT plugin to connect
-        for attempt in range(30):
+
+        mqtt_plugin = self._find_mqtt_plugin()
+        if mqtt_plugin is None:
             if self._stop_event.is_set():
                 return
-            mqtt_plugin = None
-            if hasattr(self.car_connectivity, "plugins") and hasattr(self.car_connectivity.plugins, "plugins"):
-                for plugin in self.car_connectivity.plugins.plugins.values():
-                    if hasattr(plugin, "mqtt_client") and hasattr(plugin.mqtt_client, "subscribe"):
-                        mqtt_plugin = plugin
-                        break
-            if mqtt_plugin is not None and mqtt_plugin.mqtt_client.is_connected():
-                break
-            time.sleep(2)
-        else:
             LOG.warning("PI relay: MQTT plugin not found or not connected after 60s — PI token relay disabled")
             return
 
@@ -290,7 +341,7 @@ class Connector(BaseConnector):
 
         mqtt_plugin.mqtt_client.message_callback_add(topic, _on_pi_message)
         mqtt_plugin.mqtt_client.subscribe(topic, qos=1)
-        LOG.info("PI relay subscribed to %s via MQTT plugin", topic)
+        LOG.info("PI relay subscribed to %s via MQTT plugin (no broker details needed in connector config)", topic)
 
     def _start_pi_mqtt_delayed(self) -> None:
         """Wait briefly for the MQTT broker to be fully ready, then connect."""

@@ -93,3 +93,49 @@ account 1234
 
 The connector is tested for US and CA based vehicles, and has the most support for EVs, but does support most (non-remote start) functionality for ICE vehicles as well.
 
+### Play Integrity Token Relay
+
+Some VW endpoints require a Play Integrity token. It can be supplied statically in the
+connector config with `"play_integrity_token"`, or refreshed dynamically from an external
+relay (e.g. a `vw-token-relay` add-on) publishing JSON such as
+`{"play_integrity_token": "..."}` to an MQTT topic.
+
+If the [CarConnectivity MQTT plugin](https://github.com/tillsteinbach/CarConnectivity-plugin-mqtt)
+is enabled, no MQTT broker details are needed in this connector's config — the relay
+automatically reuses the plugin's existing MQTT connection:
+
+```json
+{
+  "carConnectivity": {
+    "plugins": [
+      { "type": "mqtt", "config": { "broker": "192.168.0.123", "port": 1883 } }
+    ],
+    "connectors": [
+      {
+        "type": "volkswagen_na",
+        "config": {
+          "play_integrity_mqtt": { "enabled": true }
+        }
+      }
+    ]
+  }
+}
+```
+
+The relay is enabled automatically when the MQTT plugin is present, so `"play_integrity_mqtt"`
+can be omitted entirely. Use `"topic"` to override the default relay topic (`vw/token_relay`),
+or `"enabled": false` to disable the relay.
+
+If the MQTT plugin is not used, the relay can still connect to a broker directly (requires
+the optional `paho-mqtt` dependency, e.g. `pip install carconnectivity-connector-volkswagen-na[mqtt]`):
+
+```json
+"play_integrity_mqtt": {
+  "broker": "192.168.0.123",
+  "port": 1883,
+  "topic": "vw/token_relay",
+  "username": "optional",
+  "password": "optional"
+}
+```
+
