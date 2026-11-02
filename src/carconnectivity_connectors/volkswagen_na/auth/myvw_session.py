@@ -371,8 +371,7 @@ class MyVWSession(VWWebSession):
                 # token may arrive shortly, so report this as temporary and let the
                 # connector retry instead of treating it as a fatal error.
                 raise TemporaryAuthenticationError(
-                    "Token request rejected (401): Play Integrity token missing or invalid — "
-                    "waiting for a token from the MQTT relay before retrying"
+                    "Token request rejected (401): Play Integrity token missing or invalid — waiting for a token from the MQTT relay before retrying"
                 ) from http_error
             raise
 
