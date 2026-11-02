@@ -13,6 +13,27 @@
                 }
             }
         ],
-        "plugins": []
+        "plugins": [
+            {
+                "type": "mqtt",
+                "disabled": false,
+                "config": {
+                    "log_level": "debug",
+                    "broker": "homeassistant.local",
+                    "username": "username",
+                    "password": "password",
+                    "port": 1883,
+                    "transport": "tcp",
+                    "tls": false
+                }
+            },
+            {
+                "type": "mqtt_homeassistant",
+                "disabled": false,
+                "config": {
+                    "log_level": "debug"
+                }
+            }
+        ]
     }
 }

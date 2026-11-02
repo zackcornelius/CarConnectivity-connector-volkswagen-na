@@ -10,7 +10,11 @@ import logging
 import secrets
 import hashlib
 import base64
+import time
 import uuid
+from datetime import datetime
+
+import jwt
 
 from urllib.parse import parse_qs, parse_qsl, urlparse
 
@@ -27,7 +31,7 @@ from carconnectivity_connectors.volkswagen_na.auth.openid_session import AccessT
 from carconnectivity_connectors.volkswagen_na.auth.vw_web_session import VWWebSession
 
 if TYPE_CHECKING:
-    from typing import Tuple, Dict
+    from typing import Any, Tuple, Dict
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen_na.auth")
@@ -57,6 +61,16 @@ class MyVWSession(VWWebSession):
         self.verifier = verifier
         self.challenge = None
 
+        # Last token set received from the vw-token-relay via MQTT (see set_relay_tokens).
+        # login() prefers these over running our own (PI-guarded) authorization-code grant.
+        self._relay_tokens: Dict[str, Any] | None = None
+        # Bumped on every relay publish (usable or not); login() waits on changes to
+        # notice a fresh phone login/refresh while it holds only a stale token set.
+        self._relay_seq: int = 0
+        # Set by the connector when an MQTT token relay is configured; login() then
+        # waits briefly for the first relay message instead of burning a web login.
+        self.relay_expected: bool = False
+
         # Identify as the myVW Android app; VW's edge drops clients without these headers.
         # x-app-uuid is stable per install (persisted); mobile session id is per process.
         self._app_uuid: str = self.metadata.get("app_uuid") or str(uuid.uuid4())
@@ -78,6 +92,88 @@ class MyVWSession(VWWebSession):
         if token and token != "unavailable":  # nosec B105 — not a password, sentinel for "no PI token"
             self.PLAY_INTEGRITY_TOKEN = token
             LOG.info("Play Integrity token updated (len=%d)", len(token))
+
+    def set_relay_tokens(self, payload: Dict[str, Any]) -> bool:
+        """Adopt a complete token set supplied by the vw-token-relay (MQTT).
+
+        The relay captures the real myVW Android app's tokens — access, id and
+        refresh — straight from a successful token exchange on the phone. Using
+        them directly avoids running our own authorization-code grant, which the
+        US authorization server rejects (401 INVALID_REQUEST from /azs) no matter
+        which Play Integrity token we relay along with it.
+
+        Returns True if the payload carried a usable (non-expired) access token
+        which is now installed in this session.
+        """
+        # Count every attempt so login() can tell whether the relay has published
+        # anything new since the last (now stale) set was adopted.
+        self._relay_seq += 1
+
+        access_token = payload.get("access_token")
+        if not access_token:
+            return False
+
+        # Determine expiry from the JWT claims; the relay may also carry an
+        # "issued_at" timestamp which is more accurate than "now" for expires_in.
+        try:
+            claims = jwt.decode(access_token, options={"verify_signature": False})
+        except (jwt.PyJWTError, TypeError, ValueError) as err:
+            LOG.warning("Relay tokens ignored: access token is not a decodable JWT (%s)", err)
+            return False
+        exp = claims.get("exp")
+        if exp is not None and exp <= time.time():
+            LOG.info("Relay tokens ignored: access token already expired (%ds ago)", int(time.time() - exp))
+            return False
+        # openid_session.add_token() refuses any token inside a 120s refresh buffer
+        # (TokenExpiredError). Adopting such a token would make the very next request
+        # raise again right after login() "succeeded", so require a little more life.
+        RELAY_TOKEN_MIN_LIFETIME_SECONDS = 150  # pylint: disable=invalid-name
+        if exp is not None and exp <= time.time() + RELAY_TOKEN_MIN_LIFETIME_SECONDS:
+            LOG.info("Relay tokens ignored: access token expires in %ds, less than %ds", int(exp - time.time()), RELAY_TOKEN_MIN_LIFETIME_SECONDS)
+            return False
+
+        token: Dict[str, Any] = {
+            "access_token": access_token,
+            "token_type": payload.get("token_type", "Bearer"),
+        }
+        if payload.get("id_token"):
+            token["id_token"] = payload["id_token"]
+        if payload.get("refresh_token"):
+            token["refresh_token"] = payload["refresh_token"]
+        if exp is not None:
+            token["expires_at"] = exp
+            token["expires_in"] = int(exp - time.time())
+        issued_at = payload.get("issued_at")
+        if issued_at and exp is not None:
+            try:
+                issued_ts = datetime.fromisoformat(issued_at).timestamp()
+                token["expires_in"] = int(exp - issued_ts)
+            except (TypeError, ValueError):
+                pass
+
+        self.token = token
+        self._relay_tokens = dict(payload)
+        # The relay tokens belong to the phone app's login for this same user;
+        # take the identity from the token claims so x-user-id etc. line up.
+        sub = claims.get("sub") or claims.get("ssoid")
+        if sub and not self.user_id:
+            self.user_id = sub
+        # Refreshing these tokens must replay the verifier from the phone's original
+        # login (the endpoint rejects a refresh with a foreign code_verifier), so
+        # adopt the one the relay captured from the app's token request.
+        if payload.get("code_verifier"):
+            self.verifier = payload["code_verifier"]
+        # Mark the session as freshly logged in so force_relogin_after (if set)
+        # is measured from when we adopted the relay tokens.
+        self.last_login = time.time()
+        LOG.info(
+            "Adopted token set from MQTT relay (access_token len=%d, id_token=%s, refresh_token=%s, expires in %ss)",
+            len(access_token),
+            "yes" if token.get("id_token") else "no",
+            "yes" if token.get("refresh_token") else "no",
+            token.get("expires_in", "?"),
+        )
+        return True
 
     def _app_headers(self, content_type: str) -> Dict[str, str]:
         """Headers the myVW Android app sends on its API/token calls."""
@@ -127,7 +223,40 @@ class MyVWSession(VWWebSession):
         response.raise_for_status()
         return response
 
+    RELAY_WAIT_SECONDS: int = 10
+
+    def _wait_for_relay_tokens(self) -> None:
+        """Wait briefly for the MQTT relay to (re-)publish a usable token set."""
+        seq = self._relay_seq
+        deadline = time.monotonic() + self.RELAY_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            if self._relay_seq != seq and self._relay_tokens is not None:
+                return
+            time.sleep(0.2)
+
     def login(self):
+        # If a token relay is configured but the first (retained) MQTT message has not
+        # arrived yet, wait briefly for it instead of burning a web login whose token
+        # exchange the US endpoint rejects with 401 anyway.
+        if self.relay_expected and self._relay_tokens is None:
+            self._wait_for_relay_tokens()
+            if self._relay_tokens is None:
+                LOG.warning("No token set received from MQTT relay within %ds, falling back to web login", self.RELAY_WAIT_SECONDS)
+        # If the MQTT relay provided a token set, adopt it instead of running our own
+        # authorization-code grant: the US authorization server rejects our grant with
+        # 401 (CarnetSPAuthorizationServer /azs "Unauthorized exception") even when a
+        # genuine Play Integrity token is included, but the phone app's own tokens work.
+        # If the cached set has gone stale in the meantime, wait for the relay to
+        # publish a fresh one (the phone app re-logs in / refreshes on its own) before
+        # falling back to a web login that the US endpoint will reject anyway.
+        if self._relay_tokens and not self.set_relay_tokens(self._relay_tokens):
+            LOG.info("Login: cached relay token set is no longer usable, waiting for a fresh one")
+            self._wait_for_relay_tokens()
+        if self._relay_tokens:
+            LOG.info("Login: using token set from MQTT relay")
+            if self.set_relay_tokens(self._relay_tokens):
+                return
+            LOG.warning("Login: relay token set is no longer usable, falling back to web login")
         super(MyVWSession, self).login()
         # retrieve authorization URL
         authorization_url_str: str = self.authorization_url(url=f"https://b-h-s.spr.{self.country}00.p.con-veh.net/oidc/v1/authorize")
@@ -210,12 +339,42 @@ class MyVWSession(VWWebSession):
         #        'code_verifier': self.verifier
         #        }
         # Exchange the code using the app headers; access_type=NONE (no Bearer yet).
-        response = self.post(
-            f"https://b-h-s.spr.{self.country}00.p.con-veh.net/oidc/v1/token",
-            data=token_data,
-            headers=self._app_headers("application/x-www-form-urlencoded"),
-            access_type=AccessType.NONE,
-        )
+        if LOG.isEnabledFor(logging.DEBUG):
+            # Log the grant parameters so we can verify the PI token actually flows into
+            # the request. Token values are truncated — only prefix + length are logged.
+            _safe_params = {k: (v[:24] + f"...(len={len(v)})") if isinstance(v, str) and len(v) > 32 else v for k, v in token_data.items()}
+            LOG.debug("Token request params: %s", _safe_params)
+        try:
+            response = self.post(
+                f"https://b-h-s.spr.{self.country}00.p.con-veh.net/oidc/v1/token",
+                data=token_data,
+                headers=self._app_headers("application/x-www-form-urlencoded"),
+                access_type=AccessType.NONE,
+            )
+        except requests.HTTPError as http_error:
+            if http_error.response is not None and http_error.response.status_code == requests.codes["unauthorized"]:
+                # Dump the server's rejection details — VW's authorization server usually
+                # explains the failure (error/error_description) in the 401 body.
+                err_resp = http_error.response
+                body_text = ""
+                try:
+                    body_text = err_resp.text[:2000]
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+                LOG.debug(
+                    "Token request 401 response: headers=%s body=%s",
+                    dict(err_resp.headers),
+                    body_text,
+                )
+                # The US endpoint rejects the grant when the Play Integrity token is the
+                # placeholder or invalid. With an MQTT PI token relay configured the real
+                # token may arrive shortly, so report this as temporary and let the
+                # connector retry instead of treating it as a fatal error.
+                raise TemporaryAuthenticationError(
+                    "Token request rejected (401): Play Integrity token missing or invalid — "
+                    "waiting for a token from the MQTT relay before retrying"
+                ) from http_error
+            raise
 
         # take token from authorization response (those are stored in self.token now!)
         self.parse_from_body(response.content)

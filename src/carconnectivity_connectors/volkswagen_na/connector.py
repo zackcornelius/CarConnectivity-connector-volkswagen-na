@@ -262,6 +262,11 @@ class Connector(BaseConnector):
             if relay_requested:
                 self._pi_mqtt_topic = (pi_mqtt_config or {}).get("topic", self.PI_RELAY_DEFAULT_TOPIC)
 
+        # Set by the PI relay when a new token arrives, to wake up the background
+        # retry loop immediately instead of waiting out the full interval
+        # (e.g. right after a failed login that was waiting for a valid PI token).
+        self._pi_token_event = threading.Event()
+
         self._elapsed: List[timedelta] = []
 
     def startup(self) -> None:
@@ -316,6 +321,42 @@ class Connector(BaseConnector):
             time.sleep(2)
         return None
 
+    def _handle_pi_message(self, msg) -> None:
+        """Parse an MQTT relay message and apply the Play Integrity token it carries.
+
+        Shared by the plugin-backed and standalone relay subscriptions. When a valid
+        token is received, the background retry loop is woken up immediately so a
+        pending (or previously failed) login can be retried without waiting out the
+        update interval.
+        """
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+            adopted = False
+            if isinstance(payload, dict) and payload.get("access_token"):
+                # The relay also carries the phone app's real token set — adopt it so
+                # the session can skip its own (US-rejected) authorization-code grant.
+                adopted = self.session.set_relay_tokens(payload)
+            pi_token = payload.get("play_integrity_token")
+            if pi_token and pi_token != "unavailable":  # nosec B105 — sentinel for "no PI token"
+                self.session.set_play_integrity_token(pi_token)
+                LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
+            if adopted or (pi_token and pi_token != "unavailable"):
+                # Wake the background loop so a waiting/failed auth is retried right away
+                self._pi_token_event.set()
+            elif isinstance(payload, dict):
+                # Show which keys arrived (never the values) so a relay publishing the
+                # wrong payload shape — e.g. {"access_token": ...} instead of
+                # {"play_integrity_token": ...} — can be diagnosed from the log alone.
+                LOG.debug(
+                    "PI relay message on %s ignored: no valid play_integrity_token (payload keys: %s)",
+                    getattr(msg, "topic", "?"),
+                    ", ".join(sorted(payload.keys())) or "none",
+                )
+            else:
+                LOG.debug("PI relay message on %s ignored: JSON payload is not an object", getattr(msg, "topic", "?"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
+            LOG.warning("PI relay: could not parse MQTT message: %s", err)
+
     def _start_pi_mqtt_via_plugin(self) -> None:
         """Subscribe to the PI token relay topic through the MQTT plugin's existing connection."""
         topic = self._pi_mqtt_topic
@@ -328,16 +369,7 @@ class Connector(BaseConnector):
             return
 
         def _on_pi_message(client, userdata, msg):
-            try:
-                payload = json.loads(msg.payload.decode("utf-8"))
-                pi_token = payload.get("play_integrity_token")
-                if pi_token and pi_token != "unavailable":  # nosec B105
-                    self.session.set_play_integrity_token(pi_token)
-                    LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
-                else:
-                    LOG.debug("PI relay message received but no valid play_integrity_token in payload")
-            except (json.JSONDecodeError, UnicodeDecodeError) as err:
-                LOG.warning("PI relay: could not parse MQTT message: %s", err)
+            self._handle_pi_message(msg)
 
         mqtt_plugin.mqtt_client.message_callback_add(topic, _on_pi_message)
         mqtt_plugin.mqtt_client.subscribe(topic, qos=1)
@@ -391,16 +423,7 @@ class Connector(BaseConnector):
                 LOG.error("PI relay MQTT connection failed: rc=%d", rc)
 
         def on_message(client, userdata, msg):
-            try:
-                payload = json.loads(msg.payload.decode("utf-8"))
-                pi_token = payload.get("play_integrity_token")
-                if pi_token and pi_token != "unavailable":  # nosec B105
-                    self.session.set_play_integrity_token(pi_token)
-                    LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
-                else:
-                    LOG.debug("PI relay message received but no valid play_integrity_token in payload")
-            except (json.JSONDecodeError, UnicodeDecodeError) as err:
-                LOG.warning("PI relay: could not parse MQTT message: %s", err)
+            self._handle_pi_message(msg)
 
         def on_disconnect(client, userdata, rc):
             if rc != 0:
@@ -429,10 +452,43 @@ class Connector(BaseConnector):
                 LOG.warning("Error stopping PI relay MQTT client: %s", err)
             self._pi_mqtt_client = None
 
+    def _wait_interval(self, interval: float) -> None:
+        """Sleep up to ``interval`` seconds, waking early on shutdown or PI token arrival.
+
+        Used instead of ``self._stop_event.wait()`` in the retry paths of the
+        background loop so that a Play Integrity token delivered by the MQTT relay
+        triggers an immediate retry instead of waiting out the full update interval
+        (important right after a failed login that was waiting for a valid token).
+        """
+        import time  # pylint: disable=import-outside-toplevel
+
+        deadline = time.monotonic() + interval
+        while not self._stop_event.is_set() and not self._pi_token_event.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._pi_token_event.wait(timeout=min(remaining, 1.0))
+        # Consume the wake-up so it doesn't skip a later backoff
+        self._pi_token_event.clear()
+
     def _background_loop(self) -> None:
         self._stop_event.clear()
         fetch: bool = True
         self.connection_state._set_value(value=ConnectionState.CONNECTING)  # pylint: disable=protected-access
+        # Give the PI/token relay a short moment to deliver its retained MQTT message
+        # before the first fetch, so the session can adopt the relayed token set instead
+        # of burning a web login whose token exchange the US endpoint rejects (401).
+        if self._pi_mqtt_config is not None or self._pi_mqtt_topic is not None:
+            self.session.relay_expected = True
+            import time  # pylint: disable=import-outside-toplevel
+
+            deadline = time.monotonic() + 10
+            while not self._stop_event.is_set() and time.monotonic() < deadline:
+                # A token restored from the tokenstore may be stale; only a fresh one
+                # means we can skip waiting for the relay.
+                if (self.session.authorized and not self.session.expired) or self._pi_token_event.is_set():
+                    break
+                self._stop_event.wait(0.5)
         while not self._stop_event.is_set():
             interval = 300
             try:
@@ -463,9 +519,14 @@ class Connector(BaseConnector):
                 self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
                 self._stop_event.wait(interval)
             except TemporaryAuthenticationError as err:
-                LOG.error("Temporary authentification error during update (%s). Will try again after configured interval of %ss", str(err), interval)
+                LOG.error(
+                    "Temporary authentification error during update (%s). Will try again after configured interval of %ss"
+                    " (immediately if a Play Integrity token arrives from the MQTT relay)",
+                    str(err),
+                    interval,
+                )
                 self.connection_state._set_value(value=ConnectionState.ERROR)  # pylint: disable=protected-access
-                self._stop_event.wait(interval)
+                self._wait_interval(interval)
             except Exception as err:
                 LOG.critical("Critical error during update: %s", traceback.format_exc())
                 self.healthy._set_value(value=False)  # pylint: disable=protected-access
