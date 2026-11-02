@@ -359,8 +359,8 @@ class MyVWSession(VWWebSession):
                 body_text = ""
                 try:
                     body_text = err_resp.text[:2000]
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
+                except Exception as body_err:  # pylint: disable=broad-exception-caught
+                    body_text = f"<unreadable: {body_err}>"
                 LOG.debug(
                     "Token request 401 response: headers=%s body=%s",
                     dict(err_resp.headers),

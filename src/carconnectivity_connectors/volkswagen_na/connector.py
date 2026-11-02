@@ -340,7 +340,7 @@ class Connector(BaseConnector):
             if pi_token and pi_token != "unavailable":  # nosec B105 — sentinel for "no PI token"
                 self.session.set_play_integrity_token(pi_token)
                 LOG.info("Play Integrity token updated from MQTT relay (len=%d)", len(pi_token))
-            if adopted or (pi_token and pi_token != "unavailable"):
+            if adopted or (pi_token and pi_token != "unavailable"):  # nosec B105 — sentinel for "no PI token"
                 # Wake the background loop so a waiting/failed auth is retried right away
                 self._pi_token_event.set()
             elif isinstance(payload, dict):
