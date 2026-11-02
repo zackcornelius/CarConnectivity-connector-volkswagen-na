@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+# [0.4.0](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.3.0...v0.4.0) (2026-11-02)
+
+
+### Features
+
+* Use tokens (rather than PI) directly from the relay ([68136d9](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/commit/68136d9ccf78827c86f17f51be0284ba36c7a19b))
+
 # [0.3.0](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na/compare/v0.2.0...v0.3.0) (2026-10-31)
 
 
@@ -219,4 +226,3 @@ All notable changes to this project will be documented in this file.
 - Support for window heating attributes
 - Support for window heating command
 - SUpport for changing charging settings
-
