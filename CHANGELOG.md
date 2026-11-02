@@ -219,3 +219,4 @@ All notable changes to this project will be documented in this file.
 - Support for window heating attributes
 - Support for window heating command
 - SUpport for changing charging settings
+
